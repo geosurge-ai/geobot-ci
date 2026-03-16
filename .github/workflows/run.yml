@@ -33,17 +33,54 @@ jobs:
         with:
           repository: geosurge-ai/geobot-ci
       - name: Setup
-        uses: ./geobot-setup
+        uses: ./setup
         with:
           geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
+      - name: Check if should run
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPO="git+ssh://git@github.com/${{ github.repository }}"
+
+          # Determine base URL - use rev for push events, ref for PRs
+          if [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            BASE_URL="$REPO?rev=${{ github.event.before }}"
+            BASE_BRANCH="main"
+          else
+            BASE_URL="$REPO?ref=${{ github.base_ref }}"
+            BASE_BRANCH="${{ github.base_ref }}"
+          fi
+
+          if ! BASE=$(nix build --no-link --print-out-paths "$BASE_URL#${{ inputs.package }}" 2>&1); then
+            echo "Base build failed (new package?), running"
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          CURRENT_REF="${{ github.head_ref || github.ref_name }}"
+          CURRENT_REV="${{ github.event.pull_request.head.sha || github.sha }}"
+          CURRENT=$(nix build --no-link --print-out-paths "$REPO?ref=$CURRENT_REF&rev=$CURRENT_REV#${{ inputs.package }}")
+
+          if [[ "$CURRENT" != "$BASE" ]]; then
+            echo "Derivation changed"
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          PREV_STATUS=$(nix run nixpkgs#gh -- run list --repo ${{ github.repository }} --branch "$BASE_BRANCH" --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
+          if [[ "$PREV_STATUS" != "success" ]]; then
+            echo "Previous run failed"
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Derivation unchanged and previous run succeeded, skipping"
+          echo "should_run=false" >> $GITHUB_OUTPUT
       - name: Run ${{ inputs.package }}
-        uses: ./run
-        with:
-          package: ${{ inputs.package }}
-          workflow: ${{ inputs.workflow }}
-          timeout_seconds: ${{ inputs.timeout_seconds }}
-          repository: ${{ github.repository }}
-          base_ref: ${{ github.base_ref }}
-          base_rev: ${{ github.event.before }}
-          current_ref: ${{ github.head_ref || github.ref_name }}
-          current_rev: ${{ github.event.pull_request.head.sha || github.sha }}
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          CURRENT_REF="${{ github.head_ref || github.ref_name }}"
+          CURRENT_REV="${{ github.event.pull_request.head.sha || github.sha }}"
+          REPO="git+ssh://git@github.com/${{ github.repository }}?ref=$CURRENT_REF&rev=$CURRENT_REV"
+          timeout ${{ inputs.timeout_seconds }} nix run "$REPO#${{ inputs.package }}"

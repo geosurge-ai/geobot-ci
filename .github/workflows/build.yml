@@ -1,0 +1,37 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        required: true
+        type: string
+        description: "Nix package to build"
+      flags:
+        required: false
+        type: string
+        default: ""
+        description: "Extra flags for nix build"
+    secrets:
+      geobot_ssh_key:
+        required: true
+        description: "SSH key for git access"
+
+jobs:
+  build:
+    name: Build ${{ inputs.package }}
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: geosurge-ai/geobot-ci
+      - name: Setup
+        uses: ./setup
+        with:
+          geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
+      - name: Build ${{ inputs.package }}
+        run: |
+          CURRENT_REF="${{ github.head_ref || github.ref_name }}"
+          CURRENT_REV="${{ github.event.pull_request.head.sha || github.sha }}"
+          REPO="git+ssh://git@github.com/${{ github.repository }}?ref=$CURRENT_REF&rev=$CURRENT_REV"
+          nix build ${{ inputs.flags }} "$REPO#${{ inputs.package }}"
