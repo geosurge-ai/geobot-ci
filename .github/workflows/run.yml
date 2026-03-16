@@ -43,10 +43,15 @@ jobs:
         run: |
           REPO="git+ssh://git@github.com/${{ github.repository }}"
 
-          # Determine base rev - use previous commit for push events, base branch HEAD for PRs
+          # Determine base rev to compare against:
+          # - Push event: github.event.before contains the previous commit SHA
+          # - PR event: github.event.before is empty, use base branch HEAD
+          # - New branch push: github.event.before is all zeros, treat like PR
           if [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            # Push event - compare against previous commit
             BASE_REV="${{ github.event.before }}"
           else
+            # PR or new branch - compare against base branch HEAD
             BASE_REV=$(git ls-remote origin "${{ github.base_ref }}" | cut -f1)
           fi
           BASE_URL="$REPO?rev=$BASE_REV"
