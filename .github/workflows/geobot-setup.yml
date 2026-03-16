@@ -11,6 +11,7 @@ jobs:
   setup:
     runs-on: self-hosted
     steps:
-      - uses: geosurge-ai/geobot-ci/geobot-setup@main
+      - uses: actions/checkout@v4
+      - uses: ./geobot-setup
         with:
           geobot_ssh_key: ${{ secrets.geobot_ssh_key }}

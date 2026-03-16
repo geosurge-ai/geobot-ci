@@ -29,16 +29,16 @@ jobs:
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
-      - uses: geosurge-ai/geobot-ci/geobot-setup@main
+      - uses: actions/checkout@v4
+      - uses: ./geobot-setup
         with:
           geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
-      - uses: geosurge-ai/geobot-ci/check-if-changed@main
+      - uses: ./check-if-changed
         id: check
         with:
           package: ${{ inputs.package }}
           workflow: ${{ inputs.workflow }}
           repository: ${{ github.repository }}
-          base_ref: ${{ github.event.before }}
-          current_sha: ${{ github.sha }}
-          event_name: ${{ github.event_name }}
-          base_branch: ${{ github.base_ref }}
+          base_ref: ${{ github.base_ref || 'main' }}
+          current_ref: ${{ github.head_ref || github.ref_name }}
+          current_rev: ${{ github.sha }}
