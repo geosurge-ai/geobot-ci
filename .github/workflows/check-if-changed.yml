@@ -30,6 +30,8 @@ jobs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: geosurge-ai/geobot-ci
       - uses: ./geobot-setup
         with:
           geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
