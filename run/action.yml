@@ -15,8 +15,13 @@ inputs:
     description: "Repository in owner/repo format"
     required: true
   base_ref:
-    description: "Base branch/ref to compare against"
-    required: true
+    description: "Base branch/ref to compare against (used if base_rev not provided)"
+    required: false
+    default: ""
+  base_rev:
+    description: "Base commit SHA to compare against (takes priority over base_ref)"
+    required: false
+    default: ""
   current_ref:
     description: "Current branch/ref"
     required: true
@@ -34,7 +39,16 @@ runs:
       run: |
         REPO="git+ssh://git@github.com/${{ inputs.repository }}"
 
-        if ! BASE=$(nix build --no-link --print-out-paths "$REPO?ref=${{ inputs.base_ref }}#${{ inputs.package }}" 2>&1); then
+        # Determine base URL - use rev if provided, otherwise ref
+        if [[ -n "${{ inputs.base_rev }}" ]]; then
+          BASE_URL="$REPO?rev=${{ inputs.base_rev }}"
+          BASE_BRANCH="main"
+        else
+          BASE_URL="$REPO?ref=${{ inputs.base_ref }}"
+          BASE_BRANCH="${{ inputs.base_ref }}"
+        fi
+
+        if ! BASE=$(nix build --no-link --print-out-paths "$BASE_URL#${{ inputs.package }}" 2>&1); then
           echo "Base build failed (new package?), running"
           echo "should_run=true" >> $GITHUB_OUTPUT
           exit 0
@@ -48,7 +62,7 @@ runs:
           exit 0
         fi
 
-        PREV_STATUS=$(nix run nixpkgs#gh -- run list --repo ${{ inputs.repository }} --branch ${{ inputs.base_ref }} --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
+        PREV_STATUS=$(nix run nixpkgs#gh -- run list --repo ${{ inputs.repository }} --branch "$BASE_BRANCH" --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
         if [[ "$PREV_STATUS" != "success" ]]; then
           echo "Previous run failed"
           echo "should_run=true" >> $GITHUB_OUTPUT
