@@ -3,7 +3,7 @@ name: Geobot Setup
 on:
   workflow_call:
     secrets:
-      ssh_key:
+      geobot_ssh_key:
         required: true
         description: "SSH key for git access"
 
@@ -13,4 +13,4 @@ jobs:
     steps:
       - uses: geosurge-ai/geobot-ci/geobot-setup@main
         with:
-          ssh_key: ${{ secrets.ssh_key }}
+          geobot_ssh_key: ${{ secrets.geobot_ssh_key }}

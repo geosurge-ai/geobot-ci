@@ -1,4 +1,4 @@
-name: Run If Changed
+name: Check If Changed
 
 on:
   workflow_call:
@@ -6,37 +6,37 @@ on:
       package:
         required: true
         type: string
-        description: "Nix package name to build and run"
+        description: "Nix package name to check"
       workflow:
         required: true
         type: string
         description: "Workflow name to check previous run status"
-      timeout:
-        required: false
-        type: number
-        default: 120
-        description: "Timeout in seconds for nix run"
     secrets:
       geobot_ssh_key:
         required: true
         description: "SSH key for git access"
+    outputs:
+      should_run:
+        description: "Whether the package should run"
+        value: ${{ jobs.check.outputs.should_run }}
 
 permissions:
   actions: read
 
 jobs:
-  run:
-    name: Run ${{ inputs.package }} if changed
+  check:
     runs-on: self-hosted
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
     steps:
       - uses: geosurge-ai/geobot-ci/geobot-setup@main
         with:
           geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
-      - uses: geosurge-ai/geobot-ci/run-if-changed@main
+      - uses: geosurge-ai/geobot-ci/check-if-changed@main
+        id: check
         with:
           package: ${{ inputs.package }}
           workflow: ${{ inputs.workflow }}
-          timeout: ${{ inputs.timeout }}
           repository: ${{ github.repository }}
           base_ref: ${{ github.event.before }}
           current_sha: ${{ github.sha }}

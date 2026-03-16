@@ -1,0 +1,64 @@
+name: "Check If Changed"
+description: "Check if nix derivation changed or previous run failed"
+inputs:
+  package:
+    description: "Nix package name to check"
+    required: true
+  workflow:
+    description: "Workflow name to check previous run status"
+    required: true
+  repository:
+    description: "Repository in owner/repo format"
+    required: true
+  base_ref:
+    description: "Base ref to compare against"
+    required: true
+  current_sha:
+    description: "Current commit SHA"
+    required: true
+  event_name:
+    description: "GitHub event name (push or pull_request)"
+    required: true
+  base_branch:
+    description: "Base branch name (for pull_request events)"
+    required: false
+    default: ""
+outputs:
+  should_run:
+    description: "Whether the package should run"
+    value: ${{ steps.check.outputs.should_run }}
+runs:
+  using: "composite"
+  steps:
+    - name: Check if should run
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        BASE_REF="${{ inputs.base_ref }}"
+        RUN_FILTER="--commit $BASE_REF"
+        if [[ "${{ inputs.event_name }}" == "pull_request" ]]; then
+          BASE_REF="${{ inputs.base_branch }}"
+          RUN_FILTER="--branch ${{ inputs.base_branch }}"
+        fi
+
+        REPO="git+ssh://git@github.com/${{ inputs.repository }}"
+        BASE=$(nix build --no-link --print-out-paths "$REPO?ref=$BASE_REF#${{ inputs.package }}")
+        CURRENT=$(nix build --no-link --print-out-paths "$REPO?ref=${{ inputs.current_sha }}#${{ inputs.package }}")
+
+        if [[ "$CURRENT" != "$BASE" ]]; then
+          echo "Derivation changed"
+          echo "should_run=true" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        PREV_STATUS=$(nix run nixpkgs#gh -- run list --repo ${{ inputs.repository }} $RUN_FILTER --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
+        if [[ "$PREV_STATUS" != "success" ]]; then
+          echo "Previous run failed"
+          echo "should_run=true" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        echo "Derivation unchanged and previous run succeeded, skipping"
+        echo "should_run=false" >> $GITHUB_OUTPUT

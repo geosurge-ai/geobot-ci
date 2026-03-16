@@ -1,7 +1,7 @@
 name: "Geobot SSH Setup"
 description: "Set up SSH key for CI (secrets decryption and git access)"
 inputs:
-  ssh_key:
+  geobot_ssh_key:
     description: "The SSH private key"
     required: true
 runs:
@@ -11,7 +11,7 @@ runs:
       shell: bash
       run: |
         mkdir -p $HOME/.ssh
-        echo "${{ inputs.ssh_key }}" > $HOME/.ssh/id_ed25519
+        echo "${{ inputs.geobot_ssh_key }}" > $HOME/.ssh/id_ed25519
         chmod 600 $HOME/.ssh/id_ed25519
         echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> $HOME/.ssh/known_hosts
         echo "Host *" > $HOME/.ssh/config

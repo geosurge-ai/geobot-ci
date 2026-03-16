@@ -30,43 +30,19 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Check if should run
+    - uses: geosurge-ai/geobot-ci/check-if-changed@main
       id: check
-      shell: bash
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        BASE_REF="${{ inputs.base_ref }}"
-        RUN_FILTER="--commit $BASE_REF"
-        if [[ "${{ inputs.event_name }}" == "pull_request" ]]; then
-          BASE_REF="${{ inputs.base_branch }}"
-          RUN_FILTER="--branch ${{ inputs.base_branch }}"
-        fi
-
-        REPO="git+ssh://git@github.com/${{ inputs.repository }}"
-        BASE=$(nix build --no-link --print-out-paths "$REPO?ref=$BASE_REF#${{ inputs.package }}")
-        CURRENT=$(nix build --no-link --print-out-paths "$REPO?ref=${{ inputs.current_sha }}#${{ inputs.package }}")
-
-        echo "REPO=$REPO" >> $GITHUB_ENV
-
-        if [[ "$CURRENT" != "$BASE" ]]; then
-          echo "Derivation changed"
-          echo "should_run=true" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-
-        PREV_STATUS=$(nix run nixpkgs#gh -- run list --repo ${{ inputs.repository }} $RUN_FILTER --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
-        if [[ "$PREV_STATUS" != "success" ]]; then
-          echo "Previous run failed"
-          echo "should_run=true" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-
-        echo "Derivation unchanged and previous run succeeded, skipping"
-        echo "should_run=false" >> $GITHUB_OUTPUT
-
+      with:
+        package: ${{ inputs.package }}
+        workflow: ${{ inputs.workflow }}
+        repository: ${{ inputs.repository }}
+        base_ref: ${{ inputs.base_ref }}
+        current_sha: ${{ inputs.current_sha }}
+        event_name: ${{ inputs.event_name }}
+        base_branch: ${{ inputs.base_branch }}
     - name: Run package
       if: steps.check.outputs.should_run == 'true'
       shell: bash
       run: |
+        REPO="git+ssh://git@github.com/${{ inputs.repository }}"
         timeout ${{ inputs.timeout }} nix run "$REPO?ref=${{ inputs.current_sha }}#${{ inputs.package }}"
