@@ -72,9 +72,18 @@ jobs:
             exit 0
           fi
 
-          PREV_STATUS=$(gh run list --repo ${{ github.repository }} --commit "$BASE_REV" --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
+          # Query job-level status (not workflow-level) for granular skip logic
+          RUN_ID=$(gh run list --repo ${{ github.repository }} --commit "$BASE_REV" --workflow "${{ inputs.workflow }}" --json databaseId -q '.[0].databaseId')
+          if [[ -z "$RUN_ID" ]]; then
+            echo "No previous run found"
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          PREV_STATUS=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[] | select(.name | contains("${{ inputs.package }}")) | .conclusion')
           if [[ -z "$PREV_STATUS" || "$PREV_STATUS" != "success" ]]; then
-            echo "Previous run not found or failed"
+            echo "Previous job not found or failed"
             echo "should_run=true" >> $GITHUB_OUTPUT
             exit 0
           fi
