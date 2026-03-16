@@ -43,14 +43,13 @@ jobs:
         run: |
           REPO="git+ssh://git@github.com/${{ github.repository }}"
 
-          # Determine base URL - use rev for push events, ref for PRs
+          # Determine base rev - use previous commit for push events, base branch HEAD for PRs
           if [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
-            BASE_URL="$REPO?rev=${{ github.event.before }}"
-            BASE_BRANCH="main"
+            BASE_REV="${{ github.event.before }}"
           else
-            BASE_URL="$REPO?ref=${{ github.base_ref }}"
-            BASE_BRANCH="${{ github.base_ref }}"
+            BASE_REV=$(git ls-remote origin "${{ github.base_ref }}" | cut -f1)
           fi
+          BASE_URL="$REPO?rev=$BASE_REV"
 
           if ! BASE=$(nix build --no-link --print-out-paths "$BASE_URL#${{ inputs.package }}" 2>&1); then
             echo "Base build failed (new package?), running"
@@ -68,9 +67,9 @@ jobs:
             exit 0
           fi
 
-          PREV_STATUS=$(nix run nixpkgs#gh -- run list --repo ${{ github.repository }} --branch "$BASE_BRANCH" --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
-          if [[ "$PREV_STATUS" != "success" ]]; then
-            echo "Previous run failed"
+          PREV_STATUS=$(gh run list --repo ${{ github.repository }} --commit "$BASE_REV" --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
+          if [[ -z "$PREV_STATUS" || "$PREV_STATUS" != "success" ]]; then
+            echo "Previous run not found or failed"
             echo "should_run=true" >> $GITHUB_OUTPUT
             exit 0
           fi
