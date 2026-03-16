@@ -11,7 +11,7 @@ inputs:
     description: "Repository in owner/repo format"
     required: true
   base_ref:
-    description: "Base ref to compare against"
+    description: "Base ref to compare against (SHA for push, ignored for PR)"
     required: true
   current_sha:
     description: "Current commit SHA"
@@ -36,16 +36,19 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        BASE_REF="${{ inputs.base_ref }}"
-        RUN_FILTER="--commit $BASE_REF"
+        REPO="git+ssh://git@github.com/${{ inputs.repository }}"
+
         if [[ "${{ inputs.event_name }}" == "pull_request" ]]; then
-          BASE_REF="${{ inputs.base_branch }}"
+          # PR: base is branch name (ref), current is SHA (rev)
+          BASE=$(nix build --no-link --print-out-paths "$REPO?ref=${{ inputs.base_branch }}#${{ inputs.package }}")
           RUN_FILTER="--branch ${{ inputs.base_branch }}"
+        else
+          # Push: both are SHAs (rev)
+          BASE=$(nix build --no-link --print-out-paths "$REPO?rev=${{ inputs.base_ref }}#${{ inputs.package }}")
+          RUN_FILTER="--commit ${{ inputs.base_ref }}"
         fi
 
-        REPO="git+ssh://git@github.com/${{ inputs.repository }}"
-        BASE=$(nix build --no-link --print-out-paths "$REPO?ref=$BASE_REF#${{ inputs.package }}")
-        CURRENT=$(nix build --no-link --print-out-paths "$REPO?ref=${{ inputs.current_sha }}#${{ inputs.package }}")
+        CURRENT=$(nix build --no-link --print-out-paths "$REPO?rev=${{ inputs.current_sha }}#${{ inputs.package }}")
 
         if [[ "$CURRENT" != "$BASE" ]]; then
           echo "Derivation changed"

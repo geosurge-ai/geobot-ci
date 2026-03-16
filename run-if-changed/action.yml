@@ -46,4 +46,4 @@ runs:
       timeout-minutes: ${{ fromJSON(inputs.timeout_minutes) }}
       run: |
         REPO="git+ssh://git@github.com/${{ inputs.repository }}"
-        nix run "$REPO?ref=${{ inputs.current_sha }}#${{ inputs.package }}"
+        nix run "$REPO?rev=${{ inputs.current_sha }}#${{ inputs.package }}"
