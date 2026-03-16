@@ -26,15 +26,32 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: ./check-if-changed
+    - name: Check if should run
       id: check
-      with:
-        package: ${{ inputs.package }}
-        workflow: ${{ inputs.workflow }}
-        repository: ${{ inputs.repository }}
-        base_ref: ${{ inputs.base_ref }}
-        current_ref: ${{ inputs.current_ref }}
-        current_rev: ${{ inputs.current_rev }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        REPO="git+ssh://git@github.com/${{ inputs.repository }}"
+
+        BASE=$(nix build --no-link --print-out-paths "$REPO?ref=${{ inputs.base_ref }}#${{ inputs.package }}")
+        CURRENT=$(nix build --no-link --print-out-paths "$REPO?ref=${{ inputs.current_ref }}&rev=${{ inputs.current_rev }}#${{ inputs.package }}")
+
+        if [[ "$CURRENT" != "$BASE" ]]; then
+          echo "Derivation changed"
+          echo "should_run=true" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        PREV_STATUS=$(nix run nixpkgs#gh -- run list --repo ${{ inputs.repository }} --branch ${{ inputs.base_ref }} --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
+        if [[ "$PREV_STATUS" != "success" ]]; then
+          echo "Previous run failed"
+          echo "should_run=true" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        echo "Derivation unchanged and previous run succeeded, skipping"
+        echo "should_run=false" >> $GITHUB_OUTPUT
     - name: Run package
       if: steps.check.outputs.should_run == 'true'
       shell: bash
