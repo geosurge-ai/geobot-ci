@@ -81,7 +81,7 @@ jobs:
           fi
 
           PREV_STATUS=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
-            --jq '.jobs[] | select(.name | contains("${{ inputs.package }}")) | .conclusion')
+            --jq '.jobs[] | select(.name | endswith("Run ${{ inputs.package }} if changed")) | .conclusion')
           if [[ -z "$PREV_STATUS" || "$PREV_STATUS" != "success" ]]; then
             echo "Previous job not found or failed"
             echo "should_run=true" >> $GITHUB_OUTPUT
