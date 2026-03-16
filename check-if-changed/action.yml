@@ -11,18 +11,14 @@ inputs:
     description: "Repository in owner/repo format"
     required: true
   base_ref:
-    description: "Base ref to compare against (SHA for push, ignored for PR)"
+    description: "Base branch/ref to compare against"
     required: true
-  current_sha:
+  current_ref:
+    description: "Current branch/ref"
+    required: true
+  current_rev:
     description: "Current commit SHA"
     required: true
-  event_name:
-    description: "GitHub event name (push or pull_request)"
-    required: true
-  base_branch:
-    description: "Base branch name (for pull_request events)"
-    required: false
-    default: ""
 outputs:
   should_run:
     description: "Whether the package should run"
@@ -38,17 +34,8 @@ runs:
       run: |
         REPO="git+ssh://git@github.com/${{ inputs.repository }}"
 
-        if [[ "${{ inputs.event_name }}" == "pull_request" ]]; then
-          # PR: base is branch name (ref), current is SHA (rev)
-          BASE=$(nix build --no-link --print-out-paths "$REPO?ref=${{ inputs.base_branch }}#${{ inputs.package }}")
-          RUN_FILTER="--branch ${{ inputs.base_branch }}"
-        else
-          # Push: both are SHAs (rev)
-          BASE=$(nix build --no-link --print-out-paths "$REPO?rev=${{ inputs.base_ref }}#${{ inputs.package }}")
-          RUN_FILTER="--commit ${{ inputs.base_ref }}"
-        fi
-
-        CURRENT=$(nix build --no-link --print-out-paths "$REPO?rev=${{ inputs.current_sha }}#${{ inputs.package }}")
+        BASE=$(nix build --no-link --print-out-paths "$REPO?ref=${{ inputs.base_ref }}#${{ inputs.package }}")
+        CURRENT=$(nix build --no-link --print-out-paths "$REPO?ref=${{ inputs.current_ref }}&rev=${{ inputs.current_rev }}#${{ inputs.package }}")
 
         if [[ "$CURRENT" != "$BASE" ]]; then
           echo "Derivation changed"
@@ -56,7 +43,7 @@ runs:
           exit 0
         fi
 
-        PREV_STATUS=$(nix run nixpkgs#gh -- run list --repo ${{ inputs.repository }} $RUN_FILTER --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
+        PREV_STATUS=$(nix run nixpkgs#gh -- run list --repo ${{ inputs.repository }} --branch ${{ inputs.base_ref }} --workflow "${{ inputs.workflow }}" --json conclusion -q '.[0].conclusion')
         if [[ "$PREV_STATUS" != "success" ]]; then
           echo "Previous run failed"
           echo "should_run=true" >> $GITHUB_OUTPUT

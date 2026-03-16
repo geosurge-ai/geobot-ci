@@ -3,26 +3,14 @@ name: Run
 on:
   workflow_call:
     inputs:
-      build_package:
-        required: false
+      package:
+        required: true
         type: string
-        default: ""
-        description: "Nix package to build (optional)"
-      run_package:
-        required: false
+        description: "Nix package name to build and run"
+      workflow:
+        required: true
         type: string
-        default: ""
-        description: "Nix package to run (optional)"
-      build_flags:
-        required: false
-        type: string
-        default: ""
-        description: "Extra flags for nix build"
-      run_flags:
-        required: false
-        type: string
-        default: ""
-        description: "Extra flags for nix run"
+        description: "Workflow name to check previous run status"
       timeout_seconds:
         required: false
         type: number
@@ -33,8 +21,12 @@ on:
         required: true
         description: "SSH key for git access"
 
+permissions:
+  actions: read
+
 jobs:
   run:
+    name: Run ${{ inputs.package }} if changed
     runs-on: self-hosted
     steps:
       - uses: geosurge-ai/geobot-ci/geobot-setup@main
@@ -42,10 +34,10 @@ jobs:
           geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
       - uses: geosurge-ai/geobot-ci/run@main
         with:
-          build_package: ${{ inputs.build_package }}
-          run_package: ${{ inputs.run_package }}
-          build_flags: ${{ inputs.build_flags }}
-          run_flags: ${{ inputs.run_flags }}
+          package: ${{ inputs.package }}
+          workflow: ${{ inputs.workflow }}
           timeout_seconds: ${{ inputs.timeout_seconds }}
           repository: ${{ github.repository }}
-          current_sha: ${{ github.sha }}
+          base_ref: ${{ github.base_ref || 'main' }}
+          current_ref: ${{ github.head_ref || github.ref_name }}
+          current_rev: ${{ github.sha }}

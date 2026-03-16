@@ -11,8 +11,11 @@ inputs:
   repository:
     description: "Repository in owner/repo format"
     required: true
-  current_sha:
-    description: "Current commit SHA"
+  ref:
+    description: "Git ref (branch name)"
+    required: true
+  rev:
+    description: "Git rev (commit SHA)"
     required: true
 runs:
   using: "composite"
@@ -20,5 +23,5 @@ runs:
     - name: Build package
       shell: bash
       run: |
-        REPO="git+ssh://git@github.com/${{ inputs.repository }}?allRefs=1&rev=${{ inputs.current_sha }}"
+        REPO="git+ssh://git@github.com/${{ inputs.repository }}?ref=${{ inputs.ref }}&rev=${{ inputs.rev }}"
         nix build ${{ inputs.flags }} "$REPO#${{ inputs.package }}"

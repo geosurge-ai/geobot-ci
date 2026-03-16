@@ -1,22 +1,12 @@
-name: "Nix Run"
-description: "Build and/or run nix packages with custom flags"
+name: "Run If Changed"
+description: "Build and run nix package if derivation changed or previous run failed"
 inputs:
-  build_package:
-    description: "Nix package to build (optional)"
-    required: false
-    default: ""
-  run_package:
-    description: "Nix package to run (optional)"
-    required: false
-    default: ""
-  build_flags:
-    description: "Extra flags for nix build"
-    required: false
-    default: ""
-  run_flags:
-    description: "Extra flags for nix run"
-    required: false
-    default: ""
+  package:
+    description: "Nix package name to build and run"
+    required: true
+  workflow:
+    description: "Workflow name to check previous run status"
+    required: true
   timeout_seconds:
     description: "Timeout in seconds for nix run"
     required: false
@@ -24,21 +14,30 @@ inputs:
   repository:
     description: "Repository in owner/repo format"
     required: true
-  current_sha:
+  base_ref:
+    description: "Base branch/ref to compare against"
+    required: true
+  current_ref:
+    description: "Current branch/ref"
+    required: true
+  current_rev:
     description: "Current commit SHA"
     required: true
 runs:
   using: "composite"
   steps:
-    - name: Build package
-      if: inputs.build_package != ''
-      shell: bash
-      run: |
-        REPO="git+ssh://git@github.com/${{ inputs.repository }}?allRefs=1&rev=${{ inputs.current_sha }}"
-        nix build ${{ inputs.build_flags }} "$REPO#${{ inputs.build_package }}"
+    - uses: geosurge-ai/geobot-ci/check-if-changed@main
+      id: check
+      with:
+        package: ${{ inputs.package }}
+        workflow: ${{ inputs.workflow }}
+        repository: ${{ inputs.repository }}
+        base_ref: ${{ inputs.base_ref }}
+        current_ref: ${{ inputs.current_ref }}
+        current_rev: ${{ inputs.current_rev }}
     - name: Run package
-      if: inputs.run_package != ''
+      if: steps.check.outputs.should_run == 'true'
       shell: bash
       run: |
-        REPO="git+ssh://git@github.com/${{ inputs.repository }}?allRefs=1&rev=${{ inputs.current_sha }}"
-        timeout ${{ inputs.timeout_seconds }} nix run ${{ inputs.run_flags }} "$REPO#${{ inputs.run_package }}"
+        REPO="git+ssh://git@github.com/${{ inputs.repository }}?ref=${{ inputs.current_ref }}&rev=${{ inputs.current_rev }}"
+        timeout ${{ inputs.timeout_seconds }} nix run "$REPO#${{ inputs.package }}"
