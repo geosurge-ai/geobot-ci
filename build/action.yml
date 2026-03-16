@@ -1,0 +1,24 @@
+name: "Nix Build"
+description: "Build nix package with custom flags"
+inputs:
+  package:
+    description: "Nix package to build"
+    required: true
+  flags:
+    description: "Extra flags for nix build"
+    required: false
+    default: ""
+  repository:
+    description: "Repository in owner/repo format"
+    required: true
+  current_sha:
+    description: "Current commit SHA"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Build package
+      shell: bash
+      run: |
+        REPO="git+ssh://git@github.com/${{ inputs.repository }}?allRefs=1&rev=${{ inputs.current_sha }}"
+        nix build ${{ inputs.flags }} "$REPO#${{ inputs.package }}"
