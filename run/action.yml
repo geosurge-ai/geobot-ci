@@ -1,0 +1,44 @@
+name: "Nix Run"
+description: "Build and/or run nix packages with custom flags"
+inputs:
+  build_package:
+    description: "Nix package to build (optional)"
+    required: false
+    default: ""
+  run_package:
+    description: "Nix package to run (optional)"
+    required: false
+    default: ""
+  build_flags:
+    description: "Extra flags for nix build"
+    required: false
+    default: ""
+  run_flags:
+    description: "Extra flags for nix run"
+    required: false
+    default: ""
+  timeout_seconds:
+    description: "Timeout in seconds for nix run"
+    required: false
+    default: "600"
+  repository:
+    description: "Repository in owner/repo format"
+    required: true
+  current_sha:
+    description: "Current commit SHA"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Build package
+      if: inputs.build_package != ''
+      shell: bash
+      run: |
+        REPO="git+ssh://git@github.com/${{ inputs.repository }}?rev=${{ inputs.current_sha }}"
+        nix build ${{ inputs.build_flags }} "$REPO#${{ inputs.build_package }}"
+    - name: Run package
+      if: inputs.run_package != ''
+      shell: bash
+      run: |
+        REPO="git+ssh://git@github.com/${{ inputs.repository }}?rev=${{ inputs.current_sha }}"
+        timeout ${{ inputs.timeout_seconds }} nix run ${{ inputs.run_flags }} "$REPO#${{ inputs.run_package }}"

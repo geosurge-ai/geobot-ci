@@ -1,0 +1,51 @@
+name: Run
+
+on:
+  workflow_call:
+    inputs:
+      build_package:
+        required: false
+        type: string
+        default: ""
+        description: "Nix package to build (optional)"
+      run_package:
+        required: false
+        type: string
+        default: ""
+        description: "Nix package to run (optional)"
+      build_flags:
+        required: false
+        type: string
+        default: ""
+        description: "Extra flags for nix build"
+      run_flags:
+        required: false
+        type: string
+        default: ""
+        description: "Extra flags for nix run"
+      timeout_seconds:
+        required: false
+        type: number
+        default: 600
+        description: "Timeout in seconds for nix run"
+    secrets:
+      geobot_ssh_key:
+        required: true
+        description: "SSH key for git access"
+
+jobs:
+  run:
+    runs-on: self-hosted
+    steps:
+      - uses: geosurge-ai/geobot-ci/geobot-setup@main
+        with:
+          geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
+      - uses: geosurge-ai/geobot-ci/run@main
+        with:
+          build_package: ${{ inputs.build_package }}
+          run_package: ${{ inputs.run_package }}
+          build_flags: ${{ inputs.build_flags }}
+          run_flags: ${{ inputs.run_flags }}
+          timeout_seconds: ${{ inputs.timeout_seconds }}
+          repository: ${{ github.repository }}
+          current_sha: ${{ github.sha }}
