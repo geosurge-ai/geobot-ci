@@ -11,11 +11,11 @@ on:
         required: true
         type: string
         description: "Workflow name to check previous run status"
-      timeout:
+      timeout_minutes:
         required: false
         type: number
-        default: 120
-        description: "Timeout in seconds for nix run"
+        default: 10
+        description: "Timeout in minutes for nix run"
     secrets:
       geobot_ssh_key:
         required: true
@@ -36,7 +36,7 @@ jobs:
         with:
           package: ${{ inputs.package }}
           workflow: ${{ inputs.workflow }}
-          timeout: ${{ inputs.timeout }}
+          timeout_minutes: ${{ inputs.timeout_minutes }}
           repository: ${{ github.repository }}
           base_ref: ${{ github.event.before }}
           current_sha: ${{ github.sha }}
