@@ -43,4 +43,4 @@ jobs:
           repository: ${{ github.repository }}
           base_ref: ${{ github.base_ref || 'main' }}
           current_ref: ${{ github.head_ref || github.ref_name }}
-          current_rev: ${{ github.sha }}
+          current_rev: ${{ github.event.pull_request.head.sha || github.sha }}
