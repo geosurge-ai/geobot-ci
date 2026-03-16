@@ -32,10 +32,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: geosurge-ai/geobot-ci
-      - uses: ./geobot-setup
+      - name: Setup
+        uses: ./geobot-setup
         with:
           geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
-      - uses: ./run
+      - name: Run ${{ inputs.package }}
+        uses: ./run
         with:
           package: ${{ inputs.package }}
           workflow: ${{ inputs.workflow }}
