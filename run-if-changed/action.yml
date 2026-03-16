@@ -7,10 +7,10 @@ inputs:
   workflow:
     description: "Workflow name to check previous run status"
     required: true
-  timeout_minutes:
-    description: "Timeout in minutes for nix run"
+  timeout_seconds:
+    description: "Timeout in seconds for nix run"
     required: false
-    default: "10"
+    default: "600"
   repository:
     description: "Repository in owner/repo format"
     required: true
@@ -45,4 +45,4 @@ runs:
       shell: bash
       run: |
         REPO="git+ssh://git@github.com/${{ inputs.repository }}"
-        timeout $(( ${{ inputs.timeout_minutes }} * 60 )) nix run "$REPO?rev=${{ inputs.current_sha }}#${{ inputs.package }}"
+        timeout ${{ inputs.timeout_seconds }} nix run "$REPO?rev=${{ inputs.current_sha }}#${{ inputs.package }}"
