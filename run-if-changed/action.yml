@@ -43,7 +43,6 @@ runs:
     - name: Run package
       if: steps.check.outputs.should_run == 'true'
       shell: bash
-      timeout-minutes: ${{ fromJSON(inputs.timeout_minutes) }}
       run: |
         REPO="git+ssh://git@github.com/${{ inputs.repository }}"
-        nix run "$REPO?rev=${{ inputs.current_sha }}#${{ inputs.package }}"
+        timeout $(( ${{ inputs.timeout_minutes }} * 60 )) nix run "$REPO?rev=${{ inputs.current_sha }}#${{ inputs.package }}"
