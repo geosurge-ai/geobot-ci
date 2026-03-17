@@ -20,7 +20,7 @@ on:
         required: false
         type: string
         default: ""
-        description: "Concurrency group name"
+        description: "Concurrency group name for the run job"
       cancel_in_progress:
         required: false
         type: boolean
@@ -35,12 +35,11 @@ permissions:
   actions: read
 
 jobs:
-  run:
-    name: Run ${{ inputs.package }} if changed
+  check:
+    name: Check ${{ inputs.package }}
     runs-on: self-hosted
-    concurrency:
-      group: ${{ inputs.concurrency_group || github.run_id }}
-      cancel-in-progress: ${{ inputs.cancel_in_progress }}
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -97,7 +96,7 @@ jobs:
           fi
 
           PREV_STATUS=$(nix run nixpkgs#gh -- api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
-            --jq '.jobs[] | select(.name | endswith("Run ${{ inputs.package }} if changed")) | .conclusion')
+            --jq '.jobs[] | select(.name | endswith("Run ${{ inputs.package }}")) | .conclusion')
           if [[ -z "$PREV_STATUS" || "$PREV_STATUS" != "success" ]]; then
             echo "Previous job not found or failed"
             echo "should_run=true" >> $GITHUB_OUTPUT
@@ -106,8 +105,24 @@ jobs:
 
           echo "Derivation unchanged and previous run succeeded, skipping"
           echo "should_run=false" >> $GITHUB_OUTPUT
+
+  run:
+    name: Run ${{ inputs.package }}
+    needs: check
+    if: needs.check.outputs.should_run == 'true'
+    runs-on: self-hosted
+    concurrency:
+      group: ${{ inputs.concurrency_group || github.run_id }}
+      cancel-in-progress: ${{ inputs.cancel_in_progress }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: geosurge-ai/geobot-ci
+      - name: Setup
+        uses: ./setup
+        with:
+          geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
       - name: Run ${{ inputs.package }}
-        if: steps.check.outputs.should_run == 'true'
         run: |
           CURRENT_REF="${{ github.head_ref || github.ref_name }}"
           CURRENT_REV="${{ github.event.pull_request.head.sha || github.sha }}"
