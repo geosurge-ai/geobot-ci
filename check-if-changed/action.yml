@@ -16,6 +16,9 @@ outputs:
   should_run:
     description: "Whether the package should run"
     value: ${{ steps.check.outputs.should_run }}
+  repo:
+    description: "Nix flake URL for the current repo/ref/rev"
+    value: ${{ steps.check.outputs.repo }}
 
 runs:
   using: composite
@@ -27,6 +30,10 @@ runs:
         GH_TOKEN: ${{ github.token }}
       run: |
         REPO="git+ssh://git@github.com/${{ github.repository }}"
+        CURRENT_REF="${{ github.head_ref || github.ref_name }}"
+        CURRENT_REV="${{ github.event.pull_request.head.sha || github.sha }}"
+        CURRENT_REPO="$REPO?ref=$CURRENT_REF&rev=$CURRENT_REV"
+        echo "repo=$CURRENT_REPO" >> $GITHUB_OUTPUT
 
         # Determine base rev to compare against:
         # - PR event: always use base branch HEAD (github.event.pull_request exists)
@@ -50,9 +57,7 @@ runs:
           exit 0
         fi
 
-        CURRENT_REF="${{ github.head_ref || github.ref_name }}"
-        CURRENT_REV="${{ github.event.pull_request.head.sha || github.sha }}"
-        CURRENT=$(nix build --no-link --print-out-paths "$REPO?ref=$CURRENT_REF&rev=$CURRENT_REV#${{ inputs.package }}")
+        CURRENT=$(nix build --no-link --print-out-paths "$CURRENT_REPO#${{ inputs.package }}")
 
         if [[ "$CURRENT" != "$BASE" ]]; then
           echo "Derivation changed"
