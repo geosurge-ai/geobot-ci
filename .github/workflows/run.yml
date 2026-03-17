@@ -29,16 +29,13 @@ jobs:
     name: Run ${{ inputs.package }} if changed
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: geosurge-ai/geobot-ci
       - name: Setup
-        uses: ./setup
+        uses: geosurge-ai/geobot-ci/setup@main
         with:
           geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
       - name: Check if should run
         id: check
-        uses: ./check-if-changed
+        uses: geosurge-ai/geobot-ci/check-if-changed@main
         with:
           package: ${{ inputs.package }}
           workflow: ${{ inputs.workflow }}
