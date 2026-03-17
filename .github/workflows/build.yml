@@ -30,6 +30,8 @@ jobs:
         with:
           geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
       - name: Build ${{ inputs.package }}
+        env:
+          NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"
         run: |
           CURRENT_REF="${{ github.head_ref || github.ref_name }}"
           CURRENT_REV="${{ github.event.pull_request.head.sha || github.sha }}"
