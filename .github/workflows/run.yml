@@ -76,14 +76,14 @@ jobs:
           fi
 
           # Query job-level status (not workflow-level) for granular skip logic
-          RUN_ID=$(gh run list --repo ${{ github.repository }} --commit "$BASE_REV" --workflow "${{ inputs.workflow }}" --json databaseId -q '.[0].databaseId')
+          RUN_ID=$(nix run nixpkgs#gh -- run list --repo ${{ github.repository }} --commit "$BASE_REV" --workflow "${{ inputs.workflow }}" --json databaseId -q '.[0].databaseId')
           if [[ -z "$RUN_ID" ]]; then
             echo "No previous run found"
             echo "should_run=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          PREV_STATUS=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
+          PREV_STATUS=$(nix run nixpkgs#gh -- api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
             --jq '.jobs[] | select(.name | endswith("Run ${{ inputs.package }} if changed")) | .conclusion')
           if [[ -z "$PREV_STATUS" || "$PREV_STATUS" != "success" ]]; then
             echo "Previous job not found or failed"
