@@ -16,6 +16,16 @@ on:
         type: number
         default: 600
         description: "Timeout in seconds for nix run"
+      concurrency_group:
+        required: false
+        type: string
+        default: ""
+        description: "Concurrency group name"
+      cancel_in_progress:
+        required: false
+        type: boolean
+        default: false
+        description: "Cancel in-progress runs when a new run is triggered"
     secrets:
       geobot_ssh_key:
         required: true
@@ -28,6 +38,9 @@ jobs:
   run:
     name: Run ${{ inputs.package }} if changed
     runs-on: self-hosted
+    concurrency:
+      group: ${{ inputs.concurrency_group || github.run_id }}
+      cancel-in-progress: ${{ inputs.cancel_in_progress }}
     steps:
       - uses: actions/checkout@v4
         with:
