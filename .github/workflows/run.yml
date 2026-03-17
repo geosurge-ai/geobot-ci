@@ -56,8 +56,8 @@ jobs:
           fi
           BASE_URL="$REPO?rev=$BASE_REV"
 
-          if ! BASE=$(nix build --no-link --print-out-paths "$BASE_URL#${{ inputs.package }}" 2>&1); then
-            echo "Base build failed (new package?), running"
+          if ! BASE=$(nix build -L --no-link --print-out-paths "$BASE_URL#${{ inputs.package }}"); then
+            echo "Base build failed, continuing anyway"
             echo "should_run=true" >> $GITHUB_OUTPUT
             exit 0
           fi
