@@ -52,7 +52,7 @@ jobs:
             BASE_REV="${{ github.event.before }}"
           else
             # PR or new branch - compare against base branch HEAD
-            BASE_REV=$(git ls-remote origin "${{ github.base_ref }}" | cut -f1)
+            BASE_REV=$(git ls-remote "git@github.com:${{ github.repository }}.git" "${{ github.base_ref }}" | cut -f1)
           fi
           BASE_URL="$REPO?rev=$BASE_REV"
 
