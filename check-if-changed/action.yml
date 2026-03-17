@@ -11,6 +11,10 @@ inputs:
   run_job_name:
     required: true
     description: "Name of the run job to check previous status"
+  nix_build_flags:
+    required: false
+    default: ""
+    description: "Extra flags for nix build"
 
 outputs:
   should_run:
@@ -58,7 +62,7 @@ runs:
           exit 0
         fi
 
-        CURRENT=$(nix build --no-link --print-out-paths "$CURRENT_REPO#${{ inputs.package }}")
+        CURRENT=$(nix build ${{ inputs.nix_build_flags }} --no-link --print-out-paths "$CURRENT_REPO#${{ inputs.package }}")
 
         if [[ "$CURRENT" != "$BASE" ]]; then
           echo "Derivation changed"
