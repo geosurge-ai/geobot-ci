@@ -41,14 +41,23 @@ runs:
         echo "repo=$CURRENT_REPO" >> $GITHUB_OUTPUT
 
         # Find latest commit on main with successful run of this workflow/job
-        BASE_REV=$(nix run nixpkgs#gh -- run list \
+        RUNS=$(nix run nixpkgs#gh -- run list \
           --repo ${{ github.repository }} \
           --workflow "${{ inputs.workflow }}" \
           --branch "${{ github.event.repository.default_branch }}" \
           --status success \
-          --json headSha,jobs \
-          --limit 50 \
-          --jq '[.[] | select(.jobs | any(.name | endswith("${{ inputs.run_job_name }}") and .conclusion == "success"))] | .[0].headSha // empty')
+          --json databaseId,headSha \
+          --limit 20)
+
+        BASE_REV=""
+        for RUN_ID in $(echo "$RUNS" | nix run nixpkgs#jq -- -r '.[].databaseId'); do
+          JOB_STATUS=$(nix run nixpkgs#gh -- api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
+            --jq '.jobs[] | select(.name | endswith("${{ inputs.run_job_name }}")) | .conclusion' 2>/dev/null || true)
+          if [[ "$JOB_STATUS" == "success" ]]; then
+            BASE_REV=$(echo "$RUNS" | nix run nixpkgs#jq -- -r ".[] | select(.databaseId == $RUN_ID) | .headSha")
+            break
+          fi
+        done
 
         if [[ -z "$BASE_REV" ]]; then
           echo "No previous successful run found"
