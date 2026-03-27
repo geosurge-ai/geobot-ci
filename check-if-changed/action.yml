@@ -40,20 +40,23 @@ runs:
         CURRENT_REPO="$REPO?ref=$CURRENT_REF&rev=$CURRENT_REV"
         echo "repo=$CURRENT_REPO" >> $GITHUB_OUTPUT
 
-        # Determine base rev to compare against:
-        # - PR event: always use base branch HEAD (github.event.pull_request exists)
-        # - Push to main: use github.event.before (previous commit)
-        # - New branch push: github.event.before is all zeros, use default branch
-        if [[ -n "${{ github.event.pull_request.base.sha }}" ]]; then
-          # PR event - compare against base branch HEAD
-          BASE_REV="${{ github.event.pull_request.base.sha }}"
-        elif [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
-          # Push event - compare against previous commit
-          BASE_REV="${{ github.event.before }}"
-        else
-          # New branch - compare against default branch HEAD
-          BASE_REV=$(git ls-remote "git@github.com:${{ github.repository }}.git" "${{ github.event.repository.default_branch }}" | cut -f1)
+        # Find latest commit on main with successful run of this workflow/job
+        BASE_REV=$(nix run nixpkgs#gh -- run list \
+          --repo ${{ github.repository }} \
+          --workflow "${{ inputs.workflow }}" \
+          --branch "${{ github.event.repository.default_branch }}" \
+          --status success \
+          --json headSha,jobs \
+          --limit 50 \
+          --jq '[.[] | select(.jobs | any(.name | endswith("${{ inputs.run_job_name }}") and .conclusion == "success"))] | .[0].headSha // empty')
+
+        if [[ -z "$BASE_REV" ]]; then
+          echo "No previous successful run found"
+          echo "should_run=true" >> $GITHUB_OUTPUT
+          exit 0
         fi
+
+        echo "Comparing against last successful run: $BASE_REV"
         BASE_URL="$REPO?rev=$BASE_REV"
 
         if ! BASE=$(nix build -L --no-link --print-out-paths "$BASE_URL#${{ inputs.package }}"); then
@@ -66,22 +69,6 @@ runs:
 
         if [[ "$CURRENT" != "$BASE" ]]; then
           echo "Derivation changed"
-          echo "should_run=true" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-
-        # Query job-level status (not workflow-level) for granular skip logic
-        RUN_ID=$(nix run nixpkgs#gh -- run list --repo ${{ github.repository }} --commit "$BASE_REV" --workflow "${{ inputs.workflow }}" --json databaseId -q '.[0].databaseId')
-        if [[ -z "$RUN_ID" ]]; then
-          echo "No previous run found"
-          echo "should_run=true" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-
-        PREV_STATUS=$(nix run nixpkgs#gh -- api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
-          --jq '.jobs[] | select(.name | endswith("${{ inputs.run_job_name }}")) | .conclusion')
-        if [[ -z "$PREV_STATUS" || ("$PREV_STATUS" != "success" && "$PREV_STATUS" != "skipped") ]]; then
-          echo "Previous job not found or failed"
           echo "should_run=true" >> $GITHUB_OUTPUT
           exit 0
         fi
