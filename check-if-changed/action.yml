@@ -41,10 +41,11 @@ runs:
         echo "derivation=$CURRENT" >> $GITHUB_OUTPUT
         echo "Current derivation: $CURRENT"
 
-        # Download state file
+        # Download state file (sharded by first char of hash)
+        HASH_CHAR="${CURRENT:11:1}"
         STATE_FILE=$(mktemp)
-        if ! nix run nixpkgs#gh -- release download "geobot-ci-succeed-list" --repo "${{ github.repository }}" --pattern "succeeded.txt" --output "$STATE_FILE" --clobber 2>/dev/null; then
-          echo "No state file found, will run"
+        if ! nix run nixpkgs#gh -- release download "geobot-ci-succeed-list" --repo "${{ github.repository }}" --pattern "succeeded-${HASH_CHAR}.txt" --output "$STATE_FILE" --clobber 2>/dev/null; then
+          echo "No state file for shard $HASH_CHAR, will run"
           echo "should_run=true" >> $GITHUB_OUTPUT
           exit 0
         fi

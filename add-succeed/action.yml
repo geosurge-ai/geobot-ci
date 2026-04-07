@@ -13,21 +13,24 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
+        # Shard by first char of hash
+        DERIVATION="${{ inputs.derivation }}"
+        HASH_CHAR="${DERIVATION:11:1}"
         STATE_DIR=$(mktemp -d)
-        STATE_FILE="$STATE_DIR/succeeded.txt"
+        STATE_FILE="$STATE_DIR/succeeded-${HASH_CHAR}.txt"
 
         # Download existing state file (or create empty)
-        if ! nix run nixpkgs#gh -- release download "geobot-ci-succeed-list" --repo "${{ github.repository }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
-          echo "Creating new state file"
+        if ! nix run nixpkgs#gh -- release download "geobot-ci-succeed-list" --repo "${{ github.repository }}" --pattern "succeeded-${HASH_CHAR}.txt" --output "$STATE_FILE" 2>/dev/null; then
+          echo "Creating new state file for shard $HASH_CHAR"
           touch "$STATE_FILE"
         fi
 
         # Append derivation if not already present
-        if grep -qxF "${{ inputs.derivation }}" "$STATE_FILE"; then
+        if grep -qxF "$DERIVATION" "$STATE_FILE"; then
           echo "Derivation already in state file"
           exit 0
         fi
 
-        echo "${{ inputs.derivation }}" >> "$STATE_FILE"
+        echo "$DERIVATION" >> "$STATE_FILE"
         nix run nixpkgs#gh -- release upload "geobot-ci-succeed-list" "$STATE_FILE" --repo "${{ github.repository }}" --clobber
-        echo "Added derivation to state file"
+        echo "Added derivation to shard $HASH_CHAR"
