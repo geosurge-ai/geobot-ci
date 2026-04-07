@@ -25,7 +25,7 @@ runs:
         STATE_FILE=$(mktemp)
 
         # Download existing state file (or create empty)
-        if ! gh release download "${{ inputs.state_release }}" --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
+        if ! nix run nixpkgs#gh -- release download "${{ inputs.state_release }}" --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
           echo "Creating new state file"
           touch "$STATE_FILE"
         fi
@@ -37,5 +37,5 @@ runs:
         fi
 
         echo "${{ inputs.derivation }}" >> "$STATE_FILE"
-        gh release upload "${{ inputs.state_release }}" "$STATE_FILE" --repo "${{ inputs.state_repo }}" --clobber
+        nix run nixpkgs#gh -- release upload "${{ inputs.state_release }}" "$STATE_FILE" --repo "${{ inputs.state_repo }}" --clobber
         echo "Added derivation to state file"

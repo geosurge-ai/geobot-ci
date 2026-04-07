@@ -52,7 +52,7 @@ runs:
 
         # Download state file
         STATE_FILE=$(mktemp)
-        if ! gh release download "${{ inputs.state_release }}" --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
+        if ! nix run nixpkgs#gh -- release download "${{ inputs.state_release }}" --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
           echo "No state file found, will run"
           echo "should_run=true" >> $GITHUB_OUTPUT
           exit 0
