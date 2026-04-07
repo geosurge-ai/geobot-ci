@@ -28,5 +28,6 @@ runs:
         fi
 
         echo "${{ inputs.derivation }}" >> "$STATE_FILE"
-        nix run nixpkgs#gh -- release upload "geobot-ci-succeed-list" "$STATE_FILE" --repo "${{ github.repository }}" --clobber
+        cp "$STATE_FILE" /tmp/succeeded.txt
+        nix run nixpkgs#gh -- release upload "geobot-ci-succeed-list" /tmp/succeeded.txt --repo "${{ github.repository }}" --clobber
         echo "Added derivation to state file"
