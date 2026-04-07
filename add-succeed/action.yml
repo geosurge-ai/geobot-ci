@@ -13,7 +13,8 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        STATE_FILE=$(mktemp)
+        STATE_DIR=$(mktemp -d)
+        STATE_FILE="$STATE_DIR/succeeded.txt"
 
         # Download existing state file (or create empty)
         if ! nix run nixpkgs#gh -- release download "geobot-ci-succeed-list" --repo "${{ github.repository }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
@@ -28,6 +29,5 @@ runs:
         fi
 
         echo "${{ inputs.derivation }}" >> "$STATE_FILE"
-        cp "$STATE_FILE" /tmp/succeeded.txt
-        nix run nixpkgs#gh -- release upload "geobot-ci-succeed-list" /tmp/succeeded.txt --repo "${{ github.repository }}" --clobber
+        nix run nixpkgs#gh -- release upload "geobot-ci-succeed-list" "$STATE_FILE" --repo "${{ github.repository }}" --clobber
         echo "Added derivation to state file"
