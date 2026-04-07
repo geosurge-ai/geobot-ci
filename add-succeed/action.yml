@@ -5,10 +5,6 @@ inputs:
   derivation:
     required: true
     description: "Derivation path to record as succeeded"
-  state_repo:
-    required: false
-    default: "${{ github.repository }}"
-    description: "Repository containing the succeed list release"
   state_release:
     required: false
     default: "geobot-ci-succeed-list"
@@ -25,7 +21,7 @@ runs:
         STATE_FILE=$(mktemp)
 
         # Download existing state file (or create empty)
-        if ! nix run nixpkgs#gh -- release download "${{ inputs.state_release }}" --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
+        if ! nix run nixpkgs#gh -- release download "${{ inputs.state_release }}" --repo "${{ github.repository }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
           echo "Creating new state file"
           touch "$STATE_FILE"
         fi
@@ -37,5 +33,5 @@ runs:
         fi
 
         echo "${{ inputs.derivation }}" >> "$STATE_FILE"
-        nix run nixpkgs#gh -- release upload "${{ inputs.state_release }}" "$STATE_FILE" --repo "${{ inputs.state_repo }}" --clobber
+        nix run nixpkgs#gh -- release upload "${{ inputs.state_release }}" "$STATE_FILE" --repo "${{ github.repository }}" --clobber
         echo "Added derivation to state file"

@@ -9,10 +9,6 @@ inputs:
     required: false
     default: ""
     description: "Extra flags for nix build"
-  state_repo:
-    required: false
-    default: "${{ github.repository }}"
-    description: "Repository containing the succeed list release"
   state_release:
     required: false
     default: "geobot-ci-succeed-list"
@@ -52,7 +48,7 @@ runs:
 
         # Download state file
         STATE_FILE=$(mktemp)
-        if ! nix run nixpkgs#gh -- release download "${{ inputs.state_release }}" --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
+        if ! nix run nixpkgs#gh -- release download "${{ inputs.state_release }}" --repo "${{ github.repository }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
           echo "No state file found, will run"
           echo "should_run=true" >> $GITHUB_OUTPUT
           exit 0
