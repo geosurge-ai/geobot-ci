@@ -8,7 +8,11 @@ inputs:
   state_repo:
     required: false
     default: "geosurge-ai/geobot-ci"
-    description: "Repository containing the state release"
+    description: "Repository containing the succeed list release"
+  state_release:
+    required: false
+    default: "geobot-ci-succeed-list"
+    description: "Release tag containing the succeed list"
 
 runs:
   using: composite
@@ -21,7 +25,7 @@ runs:
         STATE_FILE=$(mktemp)
 
         # Download existing state file (or create empty)
-        if ! gh release download state --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
+        if ! gh release download "${{ inputs.state_release }}" --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
           echo "Creating new state file"
           touch "$STATE_FILE"
         fi
@@ -33,5 +37,5 @@ runs:
         fi
 
         echo "${{ inputs.derivation }}" >> "$STATE_FILE"
-        gh release upload state "$STATE_FILE" --repo "${{ inputs.state_repo }}" --clobber
+        gh release upload "${{ inputs.state_release }}" "$STATE_FILE" --repo "${{ inputs.state_repo }}" --clobber
         echo "Added derivation to state file"

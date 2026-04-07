@@ -12,7 +12,11 @@ inputs:
   state_repo:
     required: false
     default: "geosurge-ai/geobot-ci"
-    description: "Repository containing the state release"
+    description: "Repository containing the succeed list release"
+  state_release:
+    required: false
+    default: "geobot-ci-succeed-list"
+    description: "Release tag containing the succeed list"
 
 outputs:
   should_run:
@@ -48,7 +52,7 @@ runs:
 
         # Download state file
         STATE_FILE=$(mktemp)
-        if ! gh release download state --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
+        if ! gh release download "${{ inputs.state_release }}" --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
           echo "No state file found, will run"
           echo "should_run=true" >> $GITHUB_OUTPUT
           exit 0
