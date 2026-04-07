@@ -1,20 +1,18 @@
 name: Check if changed
-description: Check if a nix package derivation changed compared to base
+description: Check if a nix package derivation has already succeeded
 
 inputs:
   package:
     required: true
     description: "Nix package name to check"
-  workflow:
-    required: true
-    description: "Workflow name to check previous run status"
-  run_job_name:
-    required: true
-    description: "Name of the run job to check previous status"
   nix_build_flags:
     required: false
     default: ""
     description: "Extra flags for nix build"
+  state_repo:
+    required: false
+    default: "geosurge-ai/geobot-ci"
+    description: "Repository containing the state release"
 
 outputs:
   should_run:
@@ -23,6 +21,9 @@ outputs:
   repo:
     description: "Nix flake URL for the current repo/ref/rev"
     value: ${{ steps.check.outputs.repo }}
+  derivation:
+    description: "Current derivation path"
+    value: ${{ steps.check.outputs.derivation }}
 
 runs:
   using: composite
@@ -40,47 +41,25 @@ runs:
         CURRENT_REPO="$REPO?ref=$CURRENT_REF&rev=$CURRENT_REV"
         echo "repo=$CURRENT_REPO" >> $GITHUB_OUTPUT
 
-        # Find latest commit on main with successful run of this workflow/job
-        RUNS=$(nix run nixpkgs#gh -- run list \
-          --repo ${{ github.repository }} \
-          --workflow "${{ inputs.workflow }}" \
-          --branch "${{ github.event.repository.default_branch }}" \
-          --status success \
-          --json databaseId,headSha \
-          --limit 20)
-
-        BASE_REV=""
-        for RUN_ID in $(echo "$RUNS" | nix run nixpkgs#jq -- -r '.[].databaseId'); do
-          JOB_STATUS=$(nix run nixpkgs#gh -- api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
-            --jq '.jobs[] | select(.name | endswith("${{ inputs.run_job_name }}")) | .conclusion' 2>/dev/null || true)
-          if [[ "$JOB_STATUS" == "success" ]]; then
-            BASE_REV=$(echo "$RUNS" | nix run nixpkgs#jq -- -r ".[] | select(.databaseId == $RUN_ID) | .headSha")
-            break
-          fi
-        done
-
-        if [[ -z "$BASE_REV" ]]; then
-          echo "No previous successful run found"
-          echo "should_run=true" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-
-        echo "Comparing against last successful run: $BASE_REV"
-        BASE_URL="$REPO?rev=$BASE_REV"
-
-        if ! BASE=$(nix build -L --no-link --print-out-paths "$BASE_URL#${{ inputs.package }}"); then
-          echo "Base build failed, continuing anyway"
-          echo "should_run=true" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-
+        # Build current derivation
         CURRENT=$(nix build ${{ inputs.nix_build_flags }} --no-link --print-out-paths "$CURRENT_REPO#${{ inputs.package }}")
+        echo "derivation=$CURRENT" >> $GITHUB_OUTPUT
+        echo "Current derivation: $CURRENT"
 
-        if [[ "$CURRENT" != "$BASE" ]]; then
-          echo "Derivation changed"
+        # Download state file
+        STATE_FILE=$(mktemp)
+        if ! gh release download state --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
+          echo "No state file found, will run"
           echo "should_run=true" >> $GITHUB_OUTPUT
           exit 0
         fi
 
-        echo "Derivation unchanged and previous run succeeded, skipping"
-        echo "should_run=false" >> $GITHUB_OUTPUT
+        # Check if current derivation exists in state file
+        if grep -qxF "$CURRENT" "$STATE_FILE"; then
+          echo "Derivation already succeeded, skipping"
+          echo "should_run=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        echo "Derivation not found in state, will run"
+        echo "should_run=true" >> $GITHUB_OUTPUT

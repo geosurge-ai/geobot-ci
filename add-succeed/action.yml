@@ -1,0 +1,37 @@
+name: Add succeed
+description: Record a successful derivation to the shared state
+
+inputs:
+  derivation:
+    required: true
+    description: "Derivation path to record as succeeded"
+  state_repo:
+    required: false
+    default: "geosurge-ai/geobot-ci"
+    description: "Repository containing the state release"
+
+runs:
+  using: composite
+  steps:
+    - name: Add to succeeded list
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        STATE_FILE=$(mktemp)
+
+        # Download existing state file (or create empty)
+        if ! gh release download state --repo "${{ inputs.state_repo }}" --pattern "succeeded.txt" --output "$STATE_FILE" 2>/dev/null; then
+          echo "Creating new state file"
+          touch "$STATE_FILE"
+        fi
+
+        # Append derivation if not already present
+        if grep -qxF "${{ inputs.derivation }}" "$STATE_FILE"; then
+          echo "Derivation already in state file"
+          exit 0
+        fi
+
+        echo "${{ inputs.derivation }}" >> "$STATE_FILE"
+        gh release upload state "$STATE_FILE" --repo "${{ inputs.state_repo }}" --clobber
+        echo "Added derivation to state file"
