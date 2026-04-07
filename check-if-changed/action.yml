@@ -43,7 +43,7 @@ runs:
 
         # Download state file
         STATE_FILE=$(mktemp)
-        if ! nix run nixpkgs#gh -- release download "geobot-ci-succeed-list" --repo "${{ github.repository }}" --pattern "succeeded.txt" --output "$STATE_FILE"; then
+        if ! nix run nixpkgs#gh -- release download "geobot-ci-succeed-list" --repo "${{ github.repository }}" --pattern "succeeded.txt" --output "$STATE_FILE" --clobber 2>/dev/null; then
           echo "No state file found, will run"
           echo "should_run=true" >> $GITHUB_OUTPUT
           exit 0
