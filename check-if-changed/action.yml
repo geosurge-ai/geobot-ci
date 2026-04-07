@@ -11,7 +11,7 @@ inputs:
     description: "Extra flags for nix build"
   state_repo:
     required: false
-    default: "geosurge-ai/geobot-ci"
+    default: "${{ github.repository }}"
     description: "Repository containing the succeed list release"
   state_release:
     required: false
