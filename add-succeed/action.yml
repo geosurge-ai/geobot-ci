@@ -1,10 +1,10 @@
 name: Add succeed
-description: Record a successful derivation to the shared state
+description: Record a successful output path to the shared state
 
 inputs:
-  derivation:
+  out_path:
     required: true
-    description: "Derivation path to record as succeeded"
+    description: "Output path to record as succeeded"
 runs:
   using: composite
   steps:
@@ -12,10 +12,10 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-        DERIVATION: ${{ inputs.derivation }}
+        OUT_PATH: ${{ inputs.out_path }}
         REPOSITORY: ${{ github.repository }}
       run: |
-        SHARD=${DERIVATION:11:1}
+        SHARD=${OUT_PATH:11:1}
         STATE_FILE="$(mktemp -d)/succeeded-$SHARD.txt"
 
         if ! nix run nixpkgs#gh -- release download \
@@ -28,15 +28,15 @@ runs:
           touch "$STATE_FILE"
         fi
 
-        if grep -qxF "$DERIVATION" "$STATE_FILE"; then
-          echo "Derivation already in state file"
+        if grep -qxF "$OUT_PATH" "$STATE_FILE"; then
+          echo "Output path already in state file"
           exit 0
         fi
 
-        echo "$DERIVATION" >> "$STATE_FILE"
+        echo "$OUT_PATH" >> "$STATE_FILE"
         nix run nixpkgs#gh -- release upload \
           "geobot-ci-succeed-list" \
           "$STATE_FILE" \
           --repo "$REPOSITORY" \
           --clobber
-        echo "Added derivation to shard $SHARD"
+        echo "Added output path to shard $SHARD"

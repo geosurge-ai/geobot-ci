@@ -10,11 +10,8 @@ inputs:
     default: ""
     description: "Extra flags for nix eval"
 outputs:
-  derivation:
-    description: "Derivation path (.drv) for building - empty if should skip"
-    value: ${{ steps.check.outputs.derivation }}
   out_path:
-    description: "Output path in nix store"
+    description: "Output path in nix store - empty if should skip"
     value: ${{ steps.check.outputs.out_path }}
   main_program:
     description: "Main program name from meta.mainProgram"
@@ -38,19 +35,16 @@ runs:
         RESULT=$(nix eval \
           $NIX_EVAL_FLAGS \
           --json \
-          --apply 'p: { drv = p.drvPath; out = p.outPath; main = p.meta.mainProgram; }' \
+          --apply 'p: { out = p.outPath; main = p.meta.mainProgram; }' \
           "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE")
 
-        DRV=$(echo "$RESULT" | jq -r '.drv')
         OUT=$(echo "$RESULT" | jq -r '.out')
         MAIN=$(echo "$RESULT" | jq -r '.main')
-        echo "Derivation: $DRV"
         echo "Output: $OUT"
         echo "Main program: $MAIN"
-        echo "out_path=$OUT" >> $GITHUB_OUTPUT
         echo "main_program=$MAIN" >> $GITHUB_OUTPUT
 
-        SHARD=${DRV:11:1}
+        SHARD=${OUT:11:1}
         STATE_FILE=$(mktemp)
 
         if ! nix run nixpkgs#gh -- release download \
@@ -61,15 +55,15 @@ runs:
           --clobber \
           2>/dev/null; then
           echo "No state file for shard $SHARD, will run"
-          echo "derivation=$DRV" >> $GITHUB_OUTPUT
+          echo "out_path=$OUT" >> $GITHUB_OUTPUT
           exit 0
         fi
 
-        if grep -qxF "$DRV" "$STATE_FILE"; then
+        if grep -qxF "$OUT" "$STATE_FILE"; then
           echo "Derivation already succeeded, skipping"
-          echo "derivation=" >> $GITHUB_OUTPUT
+          echo "out_path=" >> $GITHUB_OUTPUT
           exit 0
         fi
 
         echo "Derivation not found in state, will run"
-        echo "derivation=$DRV" >> $GITHUB_OUTPUT
+        echo "out_path=$OUT" >> $GITHUB_OUTPUT
