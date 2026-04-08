@@ -13,6 +13,12 @@ outputs:
   derivation:
     description: "Derivation path (.drv) for building - empty if should skip"
     value: ${{ steps.check.outputs.derivation }}
+  out_path:
+    description: "Output path in nix store"
+    value: ${{ steps.check.outputs.out_path }}
+  main_program:
+    description: "Main program name from meta.mainProgram"
+    value: ${{ steps.check.outputs.main_program }}
 
 runs:
   using: composite
@@ -29,11 +35,20 @@ runs:
         REF: ${{ github.head_ref || github.ref_name }}
         REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
-        DRV=$(nix eval \
+        RESULT=$(nix eval \
           $NIX_EVAL_FLAGS \
-          --raw \
-          "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE.drvPath")
+          --json \
+          --apply 'p: { drv = p.drvPath; out = p.outPath; main = p.meta.mainProgram; }' \
+          "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE")
+
+        DRV=$(echo "$RESULT" | jq -r '.drv')
+        OUT=$(echo "$RESULT" | jq -r '.out')
+        MAIN=$(echo "$RESULT" | jq -r '.main')
         echo "Derivation: $DRV"
+        echo "Output: $OUT"
+        echo "Main program: $MAIN"
+        echo "out_path=$OUT" >> $GITHUB_OUTPUT
+        echo "main_program=$MAIN" >> $GITHUB_OUTPUT
 
         SHARD=${DRV:11:1}
         STATE_FILE=$(mktemp)
