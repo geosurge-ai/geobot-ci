@@ -1,7 +1,10 @@
 name: Check if changed
-description: Check if a nix package has already succeeded, build if not
+description: Setup SSH, check if a nix package has already succeeded, build if not
 
 inputs:
+  geobot_ssh_key:
+    required: true
+    description: "SSH private key for git access and secrets decryption"
   package:
     required: true
     description: "Nix package name to check"
@@ -18,6 +21,22 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Setup SSH
+      shell: bash
+      run: |
+        mkdir -p $HOME/.ssh
+        echo "${{ inputs.geobot_ssh_key }}" > $HOME/.ssh/id_ed25519
+        chmod 600 $HOME/.ssh/id_ed25519
+        echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> $HOME/.ssh/known_hosts
+        echo "Host *" > $HOME/.ssh/config
+        echo "  IdentityFile $HOME/.ssh/id_ed25519" >> $HOME/.ssh/config
+        echo "  IdentitiesOnly yes" >> $HOME/.ssh/config
+        echo "  UserKnownHostsFile $HOME/.ssh/known_hosts" >> $HOME/.ssh/config
+        echo "  StrictHostKeyChecking yes" >> $HOME/.ssh/config
+        chmod 600 $HOME/.ssh/config
+        echo "NIX_SSHOPTS=-F $HOME/.ssh/config" >> $GITHUB_ENV
+        echo "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config" >> $GITHUB_ENV
+
     - name: Evaluate package
       id: eval
       shell: bash

@@ -1,0 +1,95 @@
+name: Run
+description: Setup SSH, run binary, and record success
+
+inputs:
+  geobot_ssh_key:
+    required: true
+    description: "SSH private key for git access and secrets decryption"
+  bin:
+    required: true
+    description: "Full path to binary to run"
+  timeout:
+    required: true
+    description: "Timeout in seconds"
+  retries:
+    required: false
+    default: "0"
+    description: "Number of retry attempts on failure"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup SSH
+      shell: bash
+      run: |
+        mkdir -p $HOME/.ssh
+        echo "${{ inputs.geobot_ssh_key }}" > $HOME/.ssh/id_ed25519
+        chmod 600 $HOME/.ssh/id_ed25519
+        echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> $HOME/.ssh/known_hosts
+        echo "Host *" > $HOME/.ssh/config
+        echo "  IdentityFile $HOME/.ssh/id_ed25519" >> $HOME/.ssh/config
+        echo "  IdentitiesOnly yes" >> $HOME/.ssh/config
+        echo "  UserKnownHostsFile $HOME/.ssh/known_hosts" >> $HOME/.ssh/config
+        echo "  StrictHostKeyChecking yes" >> $HOME/.ssh/config
+        chmod 600 $HOME/.ssh/config
+        echo "NIX_SSHOPTS=-F $HOME/.ssh/config" >> $GITHUB_ENV
+        echo "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config" >> $GITHUB_ENV
+
+    - name: Run
+      shell: bash
+      env:
+        BIN: ${{ inputs.bin }}
+        TIMEOUT: ${{ inputs.timeout }}
+        RETRIES: ${{ inputs.retries }}
+      run: |
+        ATTEMPT=0
+        MAX_ATTEMPTS=$((RETRIES + 1))
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+          ATTEMPT=$((ATTEMPT + 1))
+          echo "Running attempt $ATTEMPT of $MAX_ATTEMPTS..."
+          if timeout "$TIMEOUT" "$BIN"; then
+            echo "Success!"
+            exit 0
+          else
+            EXIT_CODE=$?
+            if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+              echo "Failed with exit code $EXIT_CODE, retrying..."
+              sleep 5
+            else
+              echo "Failed after $MAX_ATTEMPTS attempts"
+              exit $EXIT_CODE
+            fi
+          fi
+        done
+
+    - name: Record success
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BIN: ${{ inputs.bin }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        SHARD=${BIN:11:1}
+        STATE_FILE="$(mktemp -d)/succeeded-$SHARD.txt"
+
+        if ! nix run nixpkgs#gh -- release download \
+          "geobot-ci-succeed-list" \
+          --repo "$REPOSITORY" \
+          --pattern "succeeded-$SHARD.txt" \
+          --output "$STATE_FILE" \
+          2>/dev/null; then
+          touch "$STATE_FILE"
+        fi
+
+        if grep -qxF "$BIN" "$STATE_FILE"; then
+          echo "Already recorded"
+          exit 0
+        fi
+
+        echo "$BIN" >> "$STATE_FILE"
+        nix run nixpkgs#gh -- release upload \
+          "geobot-ci-succeed-list" \
+          "$STATE_FILE" \
+          --repo "$REPOSITORY" \
+          --clobber
+        echo "Recorded $BIN to shard $SHARD"
