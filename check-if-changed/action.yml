@@ -38,8 +38,8 @@ runs:
           --apply 'p: { out = p.outPath; main = p.meta.mainProgram; }' \
           "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE")
 
-        OUT=$(echo "$RESULT" | jq -r '.out')
-        MAIN=$(echo "$RESULT" | jq -r '.main')
+        OUT=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.out')
+        MAIN=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.main')
         echo "Output: $OUT"
         echo "Main program: $MAIN"
         echo "main_program=$MAIN" >> $GITHUB_OUTPUT
