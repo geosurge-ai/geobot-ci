@@ -5,19 +5,13 @@ inputs:
   package:
     required: true
     description: "Nix package name to check"
-  nix_build_flags:
+  nix_eval_flags:
     required: false
     default: ""
-    description: "Extra flags for nix build"
+    description: "Extra flags for nix eval"
 outputs:
-  should_run:
-    description: "Whether the package should run"
-    value: ${{ steps.check.outputs.should_run }}
-  repo:
-    description: "Nix flake URL for the current repo/ref/rev"
-    value: ${{ steps.check.outputs.repo }}
   derivation:
-    description: "Current derivation path"
+    description: "Derivation path (.drv) for building - empty if should skip"
     value: ${{ steps.check.outputs.derivation }}
 
 runs:
@@ -29,33 +23,38 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"
+        PACKAGE: ${{ inputs.package }}
+        NIX_EVAL_FLAGS: ${{ inputs.nix_eval_flags }}
+        REPOSITORY: ${{ github.repository }}
+        REF: ${{ github.head_ref || github.ref_name }}
+        REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
-        REPO="git+ssh://git@github.com/${{ github.repository }}"
-        CURRENT_REF="${{ github.head_ref || github.ref_name }}"
-        CURRENT_REV="${{ github.event.pull_request.head.sha || github.sha }}"
-        CURRENT_REPO="$REPO?ref=$CURRENT_REF&rev=$CURRENT_REV"
-        echo "repo=$CURRENT_REPO" >> $GITHUB_OUTPUT
+        DRV=$(nix eval \
+          $NIX_EVAL_FLAGS \
+          --raw \
+          "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE.drvPath")
+        echo "Derivation: $DRV"
 
-        # Build current derivation
-        CURRENT=$(nix build ${{ inputs.nix_build_flags }} --no-link --print-out-paths "$CURRENT_REPO#${{ inputs.package }}")
-        echo "derivation=$CURRENT" >> $GITHUB_OUTPUT
-        echo "Current derivation: $CURRENT"
-
-        # Download state file (sharded by first char of hash)
-        HASH_CHAR="${CURRENT:11:1}"
+        SHARD=${DRV:11:1}
         STATE_FILE=$(mktemp)
-        if ! nix run nixpkgs#gh -- release download "geobot-ci-succeed-list" --repo "${{ github.repository }}" --pattern "succeeded-${HASH_CHAR}.txt" --output "$STATE_FILE" --clobber 2>/dev/null; then
-          echo "No state file for shard $HASH_CHAR, will run"
-          echo "should_run=true" >> $GITHUB_OUTPUT
+
+        if ! nix run nixpkgs#gh -- release download \
+          "geobot-ci-succeed-list" \
+          --repo "$REPOSITORY" \
+          --pattern "succeeded-$SHARD.txt" \
+          --output "$STATE_FILE" \
+          --clobber \
+          2>/dev/null; then
+          echo "No state file for shard $SHARD, will run"
+          echo "derivation=$DRV" >> $GITHUB_OUTPUT
           exit 0
         fi
 
-        # Check if current derivation exists in state file
-        if grep -qxF "$CURRENT" "$STATE_FILE"; then
+        if grep -qxF "$DRV" "$STATE_FILE"; then
           echo "Derivation already succeeded, skipping"
-          echo "should_run=false" >> $GITHUB_OUTPUT
+          echo "derivation=" >> $GITHUB_OUTPUT
           exit 0
         fi
 
         echo "Derivation not found in state, will run"
-        echo "should_run=true" >> $GITHUB_OUTPUT
+        echo "derivation=$DRV" >> $GITHUB_OUTPUT
