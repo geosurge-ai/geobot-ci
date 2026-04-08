@@ -1,10 +1,11 @@
 name: Add succeed
-description: Record a successful output path to the shared state
+description: Record a successful build to the shared state
 
 inputs:
-  out_path:
+  bin:
     required: true
-    description: "Output path to record as succeeded"
+    description: "Full path to binary (e.g. /nix/store/xxx/bin/program)"
+
 runs:
   using: composite
   steps:
@@ -12,10 +13,10 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
-        OUT_PATH: ${{ inputs.out_path }}
+        BIN: ${{ inputs.bin }}
         REPOSITORY: ${{ github.repository }}
       run: |
-        SHARD=${OUT_PATH:11:1}
+        SHARD=${BIN:11:1}
         STATE_FILE="$(mktemp -d)/succeeded-$SHARD.txt"
 
         if ! nix run nixpkgs#gh -- release download \
@@ -24,19 +25,18 @@ runs:
           --pattern "succeeded-$SHARD.txt" \
           --output "$STATE_FILE" \
           2>/dev/null; then
-          echo "Creating new state file for shard $SHARD"
           touch "$STATE_FILE"
         fi
 
-        if grep -qxF "$OUT_PATH" "$STATE_FILE"; then
-          echo "Output path already in state file"
+        if grep -qxF "$BIN" "$STATE_FILE"; then
+          echo "Already recorded"
           exit 0
         fi
 
-        echo "$OUT_PATH" >> "$STATE_FILE"
+        echo "$BIN" >> "$STATE_FILE"
         nix run nixpkgs#gh -- release upload \
           "geobot-ci-succeed-list" \
           "$STATE_FILE" \
           --repo "$REPOSITORY" \
           --clobber
-        echo "Added output path to shard $SHARD"
+        echo "Recorded $BIN to shard $SHARD"

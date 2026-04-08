@@ -1,5 +1,5 @@
 name: Check if changed
-description: Check if a nix package derivation has already succeeded
+description: Check if a nix package has already succeeded, build if not
 
 inputs:
   package:
@@ -9,22 +9,19 @@ inputs:
     required: false
     default: ""
     description: "Extra flags for nix eval"
+
 outputs:
-  out_path:
-    description: "Output path in nix store - empty if should skip"
-    value: ${{ steps.check.outputs.out_path }}
-  main_program:
-    description: "Main program name from meta.mainProgram"
-    value: ${{ steps.check.outputs.main_program }}
+  bin:
+    description: "Full path to binary - empty if should skip"
+    value: ${{ steps.build.outputs.bin }}
 
 runs:
   using: composite
   steps:
-    - name: Check if should run
-      id: check
+    - name: Evaluate package
+      id: eval
       shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
         NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"
         PACKAGE: ${{ inputs.package }}
         NIX_EVAL_FLAGS: ${{ inputs.nix_eval_flags }}
@@ -32,38 +29,46 @@ runs:
         REF: ${{ github.head_ref || github.ref_name }}
         REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
-        RESULT=$(nix eval \
-          $NIX_EVAL_FLAGS \
-          --json \
-          --apply 'p: { out = p.outPath; main = p.meta.mainProgram; }' \
-          "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE")
+        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE")
+        OUT=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.outPath')
+        MAIN=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.meta.mainProgram')
+        BIN="$OUT/bin/$MAIN"
+        echo "bin=$BIN" >> $GITHUB_OUTPUT
+        echo "Bin: $BIN"
 
-        OUT=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.out')
-        MAIN=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.main')
-        echo "Output: $OUT"
-        echo "Main program: $MAIN"
-        echo "main_program=$MAIN" >> $GITHUB_OUTPUT
-
-        SHARD=${OUT:11:1}
+    - name: Check if already succeeded
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BIN: ${{ steps.eval.outputs.bin }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        SHARD=${BIN:11:1}
         STATE_FILE=$(mktemp)
 
-        if ! nix run nixpkgs#gh -- release download \
+        if nix run nixpkgs#gh -- release download \
           "geobot-ci-succeed-list" \
           --repo "$REPOSITORY" \
           --pattern "succeeded-$SHARD.txt" \
           --output "$STATE_FILE" \
           --clobber \
           2>/dev/null; then
-          echo "No state file for shard $SHARD, will run"
-          echo "out_path=$OUT" >> $GITHUB_OUTPUT
-          exit 0
+          if grep -qxF "$BIN" "$STATE_FILE"; then
+            echo "Already succeeded, skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
         fi
+        echo "skip=false" >> $GITHUB_OUTPUT
 
-        if grep -qxF "$OUT" "$STATE_FILE"; then
-          echo "Derivation already succeeded, skipping"
-          echo "out_path=" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-
-        echo "Derivation not found in state, will run"
-        echo "out_path=$OUT" >> $GITHUB_OUTPUT
+    - name: Build
+      id: build
+      if: steps.check.outputs.skip != 'true'
+      shell: bash
+      env:
+        BIN: ${{ steps.eval.outputs.bin }}
+      run: |
+        OUT=$(dirname "$(dirname "$BIN")")
+        nix build -L "$OUT"
+        echo "bin=$BIN" >> $GITHUB_OUTPUT
