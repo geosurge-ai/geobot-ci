@@ -31,8 +31,8 @@ runs:
         REF: ${{ github.head_ref || github.ref_name }}
         REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
-        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE" --apply 'drv: {outPath = drv.outPath; mainProgram = drv.meta.mainProgram;}')
-        OUT=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.outPath')
+        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE" --apply 'drv: {out = drv.outPath; mainProgram = drv.meta.mainProgram;}')
+        OUT=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.out')
         MAIN=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.mainProgram')
         BIN="$OUT/bin/$MAIN"
         echo "bin=$BIN" >> $GITHUB_OUTPUT
