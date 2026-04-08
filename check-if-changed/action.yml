@@ -48,11 +48,14 @@ runs:
         REF: ${{ github.head_ref || github.ref_name }}
         REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
-        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE" --apply 'drv: {out = drv.outPath; mainProgram = drv.meta.mainProgram;}')
+        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE" --apply 'drv: {drv = drv.drvPath; out = drv.outPath; mainProgram = drv.meta.mainProgram;}')
+        DRV=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.drv')
         OUT=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.out')
         MAIN=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.mainProgram')
         BIN="$OUT/bin/$MAIN"
+        echo "drv=$DRV" >> $GITHUB_OUTPUT
         echo "bin=$BIN" >> $GITHUB_OUTPUT
+        echo "Drv: $DRV"
         echo "Bin: $BIN"
 
     - name: Check if already succeeded
@@ -86,8 +89,8 @@ runs:
       if: steps.check.outputs.skip != 'true'
       shell: bash
       env:
+        DRV: ${{ steps.eval.outputs.drv }}
         BIN: ${{ steps.eval.outputs.bin }}
       run: |
-        OUT=$(dirname "$(dirname "$BIN")")
-        nix build -L "$OUT"
+        nix build -L "$DRV^out"
         echo "bin=$BIN" >> $GITHUB_OUTPUT

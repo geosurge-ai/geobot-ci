@@ -35,7 +35,45 @@ runs:
         echo "NIX_SSHOPTS=-F $HOME/.ssh/config" >> $GITHUB_ENV
         echo "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config" >> $GITHUB_ENV
 
+    # Re-check succeed list before running. When using concurrency groups, multiple jobs
+    # wait in queue. After the previous job finishes, check if it already recorded our
+    # bin as succeeded - if so, skip running.
+    #
+    # Example with 3 jobs having the same bin=X:
+    # 1. Job A (bin=X) runs
+    # 2. Job B (bin=X) waits in queue
+    # 3. Job C (bin=X) waits in queue
+    # 4. Job A finishes, records bin=X as succeeded
+    # 5. Job B starts, re-checks succeed list -> finds bin=X -> skips
+    # 6. Job C starts, re-checks succeed list -> finds bin=X -> skips
+    - name: Check if already succeeded
+      id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BIN: ${{ inputs.bin }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        SHARD=${BIN:11:1}
+        STATE_FILE=$(mktemp)
+
+        if nix run nixpkgs#gh -- release download \
+          "geobot-ci-succeed-list" \
+          --repo "$REPOSITORY" \
+          --pattern "succeeded-$SHARD.txt" \
+          --output "$STATE_FILE" \
+          --clobber \
+          2>/dev/null; then
+          if grep -qxF "$BIN" "$STATE_FILE"; then
+            echo "Already succeeded, skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+        fi
+        echo "skip=false" >> $GITHUB_OUTPUT
+
     - name: Run
+      if: steps.check.outputs.skip != 'true'
       shell: bash
       env:
         BIN: ${{ inputs.bin }}
@@ -63,6 +101,7 @@ runs:
         done
 
     - name: Record success
+      if: steps.check.outputs.skip != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
