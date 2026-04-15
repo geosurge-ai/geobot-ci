@@ -48,9 +48,7 @@ runs:
         REF: ${{ github.head_ref || github.ref_name }}
         REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
-        FLAKE="git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE"
-        APPLY='drv: {drv = drv.drvPath; out = drv.outPath; mainProgram = drv.meta.mainProgram;}'
-        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "$FLAKE" --apply "$APPLY")
+        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE" --apply 'drv: {drv = drv.drvPath; out = drv.outPath; mainProgram = drv.meta.mainProgram;}')
         DRV=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.drv')
         OUT=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.out')
         MAIN=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.mainProgram')
