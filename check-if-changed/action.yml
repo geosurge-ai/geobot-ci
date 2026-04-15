@@ -49,10 +49,11 @@ runs:
         REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
         FLAKE="git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE"
-        RESULT=$(nix run nixpkgs#nix-eval-jobs -- --flake "$FLAKE" --meta)
-        DRV=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.drvPath')
-        OUT=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.outputs.out')
-        MAIN=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.meta.mainProgram')
+        APPLY='drv: {drv = drv.drvPath; out = drv.outPath; mainProgram = drv.meta.mainProgram;}'
+        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "$FLAKE" --apply "$APPLY")
+        DRV=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.drv')
+        OUT=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.out')
+        MAIN=$(echo "$RESULT" | nix run nixpkgs#jq -- -r '.mainProgram')
         BIN="$OUT/bin/$MAIN"
         echo "drv=$DRV" >> $GITHUB_OUTPUT
         echo "bin=$BIN" >> $GITHUB_OUTPUT
