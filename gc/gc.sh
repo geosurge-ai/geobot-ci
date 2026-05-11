@@ -92,8 +92,12 @@ done
 
 # Per-repo cache directory (memoized).
 declare -A repo_cache_dir=()
-# Accumulated paths per ssh_target.
-declare -A paths_for_target=()
+# Paths per (host|target_id). target_id is a short hash of "<repo>#<attr>",
+# so each target gets its own gcroot subdir on the remote — a cache-miss
+# for one target on a host doesn't wipe other targets' subdirs.
+declare -A paths_for_target_id=()
+# Per-host, the list of target_ids in original order (space-separated).
+declare -A target_ids_in_order=()
 
 for i in "${!ssh_targets[@]}"; do
   st="${ssh_targets[$i]}"
@@ -101,7 +105,15 @@ for i in "${!ssh_targets[@]}"; do
   attr="${attrs[$i]}"
   retain="${retains[$i]}"
 
-  echo "=== Resolving $st :: $repo#$attr (retain=$retain) ==="
+  tid=$(printf '%s' "$repo#$attr" | sha256sum | cut -c1-16)
+  echo "=== Resolving $st :: $repo#$attr (retain=$retain, subdir=$tid) ==="
+
+  # Track target_ids per host (in input order)
+  if [ -z "${target_ids_in_order[$st]:-}" ]; then
+    target_ids_in_order["$st"]="$tid"
+  else
+    target_ids_in_order["$st"]="${target_ids_in_order[$st]} $tid"
+  fi
 
   if [ -z "${repo_cache_dir[$repo]:-}" ]; then
     d="$workdir/cache/${repo//\//__}"
@@ -128,7 +140,8 @@ for i in "${!ssh_targets[@]}"; do
   ' "$d"/eval-cache-*.json)
 
   if [ -z "$mapping" ]; then
-    echo "WARN: no eval-cache entries matched $repo#$attr for last $retain commits — this target contributes 0 paths to $st" >&2
+    echo "WARN: no eval-cache entries matched $repo#$attr for last $retain commits — this target contributes 0 paths to $st (its existing subdir $tid will be preserved)" >&2
+    paths_for_target_id["$st|$tid"]=""
     continue
   fi
 
@@ -137,13 +150,9 @@ for i in "${!ssh_targets[@]}"; do
 
   paths=$(printf '%s\n' "$mapping" | awk '{print $3}' | sort -u)
   count=$(printf '%s\n' "$paths" | wc -l)
-  echo "→ $count unique outPath(s) for $st"
+  echo "→ $count unique outPath(s) for target $tid on $st"
 
-  if [ -z "${paths_for_target[$st]:-}" ]; then
-    paths_for_target["$st"]="$paths"
-  else
-    paths_for_target["$st"]=$(printf '%s\n%s' "${paths_for_target[$st]}" "$paths" | sort -u)
-  fi
+  paths_for_target_id["$st|$tid"]="$paths"
 done
 
 run_gc="${RUN_GC:-true}"
@@ -157,74 +166,114 @@ echo "RUN_GC=$run_gc (will$([ "$run_gc" = "true" ] || echo " NOT") run nix-colle
 # so passing them space-separated on the command line is safe.
 remote_script=$(cat <<'REMOTE'
 set -eu
-gcroot_dir="/nix/var/nix/gcroots/repo-gcroot"
+gcroot_root="/nix/var/nix/gcroots/repo-gcroot"
 hostname=$(hostname)
+mkdir -p "$gcroot_root"
 
-# First pass: classify each path WITHOUT touching gcroot_dir yet. We must not
-# wipe the existing gcroots until we know we have at least one replacement,
-# otherwise a transient empty input would leave the host unprotected.
-to_install=()
-to_skip=()
-for store_path in "$@"; do
-  if [ -e "$store_path" ]; then
-    to_install+=("$store_path")
-  else
-    to_skip+=("$store_path")
-  fi
+# Args are a sequence of blocks:
+#   TARGET <target_id> <path1> <path2> ... [TARGET ...] END
+# Nix store paths can't conflict with the TARGET/END keywords (paths start
+# with /), so no count or escaping is needed.
+host_added=0
+host_skipped=0
+targets_total=0
+targets_empty=0
+
+while [ "$#" -gt 0 ]; do
+  marker="$1"; shift
+  case "$marker" in
+    END) break ;;
+    TARGET)
+      tid="$1"; shift
+      targets_total=$((targets_total + 1))
+      target_paths=()
+      while [ "$#" -gt 0 ] && [ "$1" != "TARGET" ] && [ "$1" != "END" ]; do
+        target_paths+=("$1"); shift
+      done
+
+      target_subdir="$gcroot_root/$tid"
+
+      # Classify
+      to_install=()
+      to_skip=()
+      for p in "${target_paths[@]+"${target_paths[@]}"}"; do
+        if [ -e "$p" ]; then to_install+=("$p"); else to_skip+=("$p"); fi
+      done
+
+      echo "--- Target $tid on $hostname: ${#target_paths[@]} input path(s) ---"
+
+      if [ "${#to_install[@]}" -eq 0 ]; then
+        for p in "${to_skip[@]+"${to_skip[@]}"}"; do echo "  [-] missing $p"; done
+        echo "  ... 0 installable; existing $target_subdir preserved"
+        targets_empty=$((targets_empty + 1))
+        continue
+      fi
+
+      # Refresh this target's subdir only.
+      rm -rf "$target_subdir"
+      mkdir -p "$target_subdir"
+      for p in "${to_install[@]}"; do
+        ln -sfn "$p" "$target_subdir/$(basename "$p")"
+        echo "  [+] gcroot  $p"
+      done
+      for p in "${to_skip[@]+"${to_skip[@]}"}"; do
+        echo "  [-] missing $p"
+      done
+
+      host_added=$((host_added + ${#to_install[@]}))
+      host_skipped=$((host_skipped + ${#to_skip[@]}))
+      ;;
+    *)
+      echo "ERROR: unexpected payload marker '$marker' on $hostname" >&2
+      exit 1
+      ;;
+  esac
 done
-created=${#to_install[@]}
-skipped=${#to_skip[@]}
 
-# Fail-fast BEFORE wiping existing gcroots.
-if [ "$created" -eq 0 ]; then
-  for p in "${to_skip[@]}"; do echo "  [-] missing $p"; done
-  echo "--- $hostname summary: 0 added, $skipped skipped ---"
-  echo "Existing gcroots in $gcroot_dir left untouched."
+echo "--- $hostname summary: $host_added added, $host_skipped skipped across $targets_total target(s); $targets_empty had 0 installable (subdirs preserved) ---"
+
+# Per-host fail-fast: if every target was empty, don't run nix-collect-garbage.
+if [ "$host_added" -eq 0 ]; then
   if [ "${RUN_GC:-true}" = "true" ]; then
-    echo "FAIL: 0 gcroots installable on $hostname — refusing to nix-collect-garbage (would leave store unprotected)" >&2
+    echo "FAIL: 0 gcroots installed across all targets on $hostname — refusing nix-collect-garbage" >&2
     exit 1
   else
-    echo "WARN: 0 gcroots installable on $hostname (RUN_GC=false; existing gcroots preserved)" >&2
+    echo "WARN: 0 gcroots installed across all targets on $hostname (RUN_GC=false; existing subdirs preserved)" >&2
     exit 0
   fi
 fi
-
-# Safe to wipe now: we have at least one replacement to install.
-echo "--- Refreshing $gcroot_dir on $hostname ($created paths) ---"
-rm -rf "$gcroot_dir"
-mkdir -p "$gcroot_dir"
-for p in "${to_install[@]}"; do
-  ln -sfn "$p" "$gcroot_dir/$(basename "$p")"
-  echo "  [+] gcroot  $p"
-done
-for p in "${to_skip[@]}"; do
-  echo "  [-] missing $p"
-done
-echo "--- $hostname summary: $created added, $skipped skipped ---"
 
 if [ "${RUN_GC:-true}" = "true" ]; then
   echo "=== Running nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS} on $hostname ==="
   # shellcheck disable=SC2086  # intentional word-splitting on extra args
   nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS}
 else
-  echo "=== Skipping nix-collect-garbage (RUN_GC=false). Inspect gcroots with: ls -la $gcroot_dir ==="
+  echo "=== Skipping nix-collect-garbage (RUN_GC=false). Inspect gcroots with: ls -la $gcroot_root ==="
 fi
 REMOTE
 )
 
 for st in "${host_order[@]}"; do
-  paths="${paths_for_target[$st]:-}"
-  if [ -z "$paths" ]; then
-    count=0
-    paths_args=""
-  else
-    count=$(printf '%s\n' "$paths" | wc -l)
-    paths_args=$(printf '%s\n' "$paths" | tr '\n' ' ')
-  fi
-  echo "=== GC on $st ($count path(s) to attempt) ==="
+  args=()
+  host_total_paths=0
+  host_target_count=0
+  for tid in ${target_ids_in_order[$st]:-}; do
+    host_target_count=$((host_target_count + 1))
+    paths="${paths_for_target_id[$st|$tid]:-}"
+    if [ -z "$paths" ]; then
+      args+=(TARGET "$tid")
+    else
+      mapfile -t paths_arr <<< "$paths"
+      args+=(TARGET "$tid" "${paths_arr[@]}")
+      host_total_paths=$((host_total_paths + ${#paths_arr[@]}))
+    fi
+  done
+  args+=(END)
+
+  echo "=== Sending to $st: $host_total_paths path(s) across $host_target_count target(s) ==="
   ncg_args_quoted=$(printf '%q' "${NIX_COLLECT_GARBAGE_ARGS:-}")
   # shellcheck disable=SC2029
-  ssh "${ssh_opts[@]}" "$st" "RUN_GC=$run_gc NIX_COLLECT_GARBAGE_ARGS=$ncg_args_quoted bash -s -- $paths_args" <<< "$remote_script"
+  ssh "${ssh_opts[@]}" "$st" "RUN_GC=$run_gc NIX_COLLECT_GARBAGE_ARGS=$ncg_args_quoted bash -s -- ${args[*]}" <<< "$remote_script"
 done
 
 echo "=== All done ==="
