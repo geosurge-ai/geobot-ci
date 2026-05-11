@@ -1,0 +1,92 @@
+name: Eval
+description: |
+  Evaluate a flake attribute and record the raw `nix eval --json` output to
+  the consumer repo's `geobot-ci-eval-cache` release. No build, no run.
+
+  Tolerates packages without `meta.mainProgram` (so aggregates like
+  `checks.<system>.all` work). Useful for feeding the cache with attrs
+  the CI doesn't directly build — e.g. cross-system attrs that downstream
+  tools (gc, etc.) want to read.
+
+inputs:
+  geobot_ssh_key:
+    required: true
+    description: "SSH private key for git access"
+  package:
+    required: true
+    description: "Nix package attribute to evaluate"
+  nix_eval_flags:
+    required: false
+    default: ""
+    description: "Extra flags for nix eval"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup SSH
+      shell: bash
+      run: |
+        mkdir -p $HOME/.ssh
+        echo "${{ inputs.geobot_ssh_key }}" > $HOME/.ssh/id_ed25519
+        chmod 600 $HOME/.ssh/id_ed25519
+        echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> $HOME/.ssh/known_hosts
+        echo "Host *" > $HOME/.ssh/config
+        echo "  IdentityFile $HOME/.ssh/id_ed25519" >> $HOME/.ssh/config
+        echo "  IdentitiesOnly yes" >> $HOME/.ssh/config
+        echo "  UserKnownHostsFile $HOME/.ssh/known_hosts" >> $HOME/.ssh/config
+        echo "  StrictHostKeyChecking yes" >> $HOME/.ssh/config
+        chmod 600 $HOME/.ssh/config
+        echo "NIX_SSHOPTS=-F $HOME/.ssh/config" >> $GITHUB_ENV
+        echo "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config" >> $GITHUB_ENV
+
+    - name: Evaluate package
+      id: eval
+      shell: bash
+      env:
+        NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"
+        PACKAGE: ${{ inputs.package }}
+        NIX_EVAL_FLAGS: ${{ inputs.nix_eval_flags }}
+        REPOSITORY: ${{ github.repository }}
+        REF: ${{ github.head_ref || github.ref_name }}
+        REV: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: |
+        KEY="git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE"
+        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; outputs = builtins.listToAttrs (map (n: { name = n; value = drv.${n}.outPath; }) drv.outputs); mainProgram = drv.meta.mainProgram or null; }')
+        EVAL_FILE="$RUNNER_TEMP/geobot-eval-result.json"
+        printf '%s' "$RESULT" > "$EVAL_FILE"
+        echo "key=$KEY" >> $GITHUB_OUTPUT
+        echo "eval_file=$EVAL_FILE" >> $GITHUB_OUTPUT
+        echo "Key: $KEY"
+        echo "Result: $RESULT"
+
+    - name: Record eval result
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        KEY: ${{ steps.eval.outputs.key }}
+        EVAL_FILE: ${{ steps.eval.outputs.eval_file }}
+      run: |
+        SHARD=$(printf '%s' "$KEY" | sha256sum | cut -c1)
+        WORKDIR=$(mktemp -d)
+        STATE_FILE="$WORKDIR/eval-cache-$SHARD.json"
+
+        if ! nix run nixpkgs#gh -- release download \
+          "geobot-ci-eval-cache" \
+          --repo "$REPOSITORY" \
+          --pattern "eval-cache-$SHARD.json" \
+          --output "$STATE_FILE" \
+          2>/dev/null; then
+          echo '{}' > "$STATE_FILE"
+        fi
+
+        NEW_FILE="$WORKDIR/new-eval-cache-$SHARD.json"
+        nix run nixpkgs#jq -- --arg k "$KEY" --slurpfile v "$EVAL_FILE" '.[$k] = $v[0]' "$STATE_FILE" > "$NEW_FILE"
+        mv "$NEW_FILE" "$STATE_FILE"
+
+        nix run nixpkgs#gh -- release upload \
+          "geobot-ci-eval-cache" \
+          "$STATE_FILE" \
+          --repo "$REPOSITORY" \
+          --clobber
+        echo "Recorded $KEY to shard $SHARD"
