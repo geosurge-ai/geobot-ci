@@ -146,24 +146,6 @@ for i in "${!ssh_targets[@]}"; do
   fi
 done
 
-# Per-host fail-fast: every configured host must have at least one path,
-# otherwise nix-collect-garbage there would run with an empty gcroot set
-# and wipe the store.
-empty_hosts=()
-for st in "${host_order[@]}"; do
-  if [ -z "${paths_for_target[$st]:-}" ]; then
-    empty_hosts+=("$st")
-  fi
-done
-if [ ${#empty_hosts[@]} -gt 0 ]; then
-  echo "FAIL: the following host(s) have 0 paths across all their targets:" >&2
-  for h in "${empty_hosts[@]}"; do
-    echo "  - $h" >&2
-  done
-  echo "Add `check-if-changed`/`eval` steps for the missing attrs so the cache has entries, then retry." >&2
-  exit 1
-fi
-
 run_gc="${RUN_GC:-true}"
 case "$run_gc" in
   true|false) ;;
@@ -193,6 +175,15 @@ for store_path in "$@"; do
   fi
 done
 echo "--- $hostname summary: $created added, $skipped skipped ---"
+if [ "$created" -eq 0 ]; then
+  if [ "${RUN_GC:-true}" = "true" ]; then
+    echo "FAIL: 0 gcroots created on $hostname — refusing to run nix-collect-garbage (would wipe the store)" >&2
+    exit 1
+  else
+    echo "WARN: 0 gcroots created on $hostname (RUN_GC=false, so no harm — but the GC would have refused in real mode)" >&2
+    exit 0
+  fi
+fi
 if [ "${RUN_GC:-true}" = "true" ]; then
   echo "=== Running nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS} on $hostname ==="
   # shellcheck disable=SC2086  # intentional word-splitting on extra args
@@ -204,10 +195,15 @@ REMOTE
 )
 
 for st in "${host_order[@]}"; do
-  paths="${paths_for_target[$st]}"
-  count=$(printf '%s\n' "$paths" | wc -l)
-  echo "=== GC on $st ($count path(s)) ==="
-  paths_args=$(printf '%s\n' "$paths" | tr '\n' ' ')
+  paths="${paths_for_target[$st]:-}"
+  if [ -z "$paths" ]; then
+    count=0
+    paths_args=""
+  else
+    count=$(printf '%s\n' "$paths" | wc -l)
+    paths_args=$(printf '%s\n' "$paths" | tr '\n' ' ')
+  fi
+  echo "=== GC on $st ($count path(s) to attempt) ==="
   ncg_args_quoted=$(printf '%q' "${NIX_COLLECT_GARBAGE_ARGS:-}")
   # shellcheck disable=SC2029
   ssh "${ssh_opts[@]}" "$st" "RUN_GC=$run_gc NIX_COLLECT_GARBAGE_ARGS=$ncg_args_quoted bash -s -- $paths_args" <<< "$remote_script"
