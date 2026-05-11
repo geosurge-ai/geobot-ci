@@ -20,6 +20,21 @@ inputs:
   targets:
     required: true
     description: "Newline-separated GC targets — see action description"
+  run_gc:
+    required: false
+    default: "true"
+    description: |
+      If "true" (default), run `nix-collect-garbage` after updating gcroots.
+      If "false", only refresh the gcroots (wipe and recreate symlinks) and
+      skip the actual collection — useful for testing or just keeping the
+      gcroot set in sync without sweeping.
+  nix_collect_garbage_args:
+    required: false
+    default: ""
+    description: |
+      Extra args forwarded verbatim to `nix-collect-garbage` (e.g.
+      "--delete-older-than 7d" or "--max-freed 50G"). Empty by default,
+      which means `nix-collect-garbage` runs with no extra flags.
 
 runs:
   using: composite
@@ -39,4 +54,6 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         TARGETS: ${{ inputs.targets }}
+        RUN_GC: ${{ inputs.run_gc }}
+        NIX_COLLECT_GARBAGE_ARGS: ${{ inputs.nix_collect_garbage_args }}
       run: bash "$GITHUB_ACTION_PATH/gc.sh"

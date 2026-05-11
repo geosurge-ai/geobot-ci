@@ -160,6 +160,13 @@ if [ ${#empty_hosts[@]} -gt 0 ]; then
   exit 1
 fi
 
+run_gc="${RUN_GC:-true}"
+case "$run_gc" in
+  true|false) ;;
+  *) echo "ERROR: RUN_GC must be 'true' or 'false', got '$run_gc'" >&2; exit 1 ;;
+esac
+echo "RUN_GC=$run_gc (will$([ "$run_gc" = "true" ] || echo " NOT") run nix-collect-garbage)"
+
 # Inline remote script. Nix store paths contain no shell metacharacters,
 # so passing them space-separated on the command line is safe.
 remote_script=$(cat <<'REMOTE'
@@ -167,13 +174,24 @@ set -eu
 gcroot_dir="/nix/var/nix/gcroots/repo-gcroot"
 rm -rf "$gcroot_dir"
 mkdir -p "$gcroot_dir"
+created=0
+skipped=0
 for store_path in "$@"; do
   if [ -e "$store_path" ]; then
     ln -sfn "$store_path" "$gcroot_dir/$(basename "$store_path")"
+    created=$((created + 1))
+  else
+    skipped=$((skipped + 1))
   fi
 done
-echo "=== Running nix-collect-garbage on $(hostname) ==="
-nix-collect-garbage --delete-older-than 7d
+echo "Installed $created gcroot symlinks in $gcroot_dir (skipped $skipped paths not in store) on $(hostname)"
+if [ "${RUN_GC:-true}" = "true" ]; then
+  echo "=== Running nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS} on $(hostname) ==="
+  # shellcheck disable=SC2086  # intentional word-splitting on extra args
+  nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS}
+else
+  echo "=== Skipping nix-collect-garbage (RUN_GC=false). Inspect gcroots with: ls -la $gcroot_dir ==="
+fi
 REMOTE
 )
 
@@ -182,8 +200,9 @@ for st in "${host_order[@]}"; do
   count=$(printf '%s\n' "$paths" | wc -l)
   echo "=== GC on $st ($count path(s)) ==="
   paths_args=$(printf '%s\n' "$paths" | tr '\n' ' ')
+  ncg_args_quoted=$(printf '%q' "${NIX_COLLECT_GARBAGE_ARGS:-}")
   # shellcheck disable=SC2029
-  ssh "${ssh_opts[@]}" "$st" "bash -s -- $paths_args" <<< "$remote_script"
+  ssh "${ssh_opts[@]}" "$st" "RUN_GC=$run_gc NIX_COLLECT_GARBAGE_ARGS=$ncg_args_quoted bash -s -- $paths_args" <<< "$remote_script"
 done
 
 echo "=== All done ==="
