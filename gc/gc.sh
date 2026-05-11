@@ -159,31 +159,49 @@ remote_script=$(cat <<'REMOTE'
 set -eu
 gcroot_dir="/nix/var/nix/gcroots/repo-gcroot"
 hostname=$(hostname)
-echo "--- Resetting $gcroot_dir on $hostname ---"
-rm -rf "$gcroot_dir"
-mkdir -p "$gcroot_dir"
-created=0
-skipped=0
+
+# First pass: classify each path WITHOUT touching gcroot_dir yet. We must not
+# wipe the existing gcroots until we know we have at least one replacement,
+# otherwise a transient empty input would leave the host unprotected.
+to_install=()
+to_skip=()
 for store_path in "$@"; do
   if [ -e "$store_path" ]; then
-    ln -sfn "$store_path" "$gcroot_dir/$(basename "$store_path")"
-    echo "  [+] gcroot  $store_path"
-    created=$((created + 1))
+    to_install+=("$store_path")
   else
-    echo "  [-] missing $store_path"
-    skipped=$((skipped + 1))
+    to_skip+=("$store_path")
   fi
 done
-echo "--- $hostname summary: $created added, $skipped skipped ---"
+created=${#to_install[@]}
+skipped=${#to_skip[@]}
+
+# Fail-fast BEFORE wiping existing gcroots.
 if [ "$created" -eq 0 ]; then
+  for p in "${to_skip[@]}"; do echo "  [-] missing $p"; done
+  echo "--- $hostname summary: 0 added, $skipped skipped ---"
+  echo "Existing gcroots in $gcroot_dir left untouched."
   if [ "${RUN_GC:-true}" = "true" ]; then
-    echo "FAIL: 0 gcroots created on $hostname — refusing to run nix-collect-garbage (would wipe the store)" >&2
+    echo "FAIL: 0 gcroots installable on $hostname — refusing to nix-collect-garbage (would leave store unprotected)" >&2
     exit 1
   else
-    echo "WARN: 0 gcroots created on $hostname (RUN_GC=false, so no harm — but the GC would have refused in real mode)" >&2
+    echo "WARN: 0 gcroots installable on $hostname (RUN_GC=false; existing gcroots preserved)" >&2
     exit 0
   fi
 fi
+
+# Safe to wipe now: we have at least one replacement to install.
+echo "--- Refreshing $gcroot_dir on $hostname ($created paths) ---"
+rm -rf "$gcroot_dir"
+mkdir -p "$gcroot_dir"
+for p in "${to_install[@]}"; do
+  ln -sfn "$p" "$gcroot_dir/$(basename "$p")"
+  echo "  [+] gcroot  $p"
+done
+for p in "${to_skip[@]}"; do
+  echo "  [-] missing $p"
+done
+echo "--- $hostname summary: $created added, $skipped skipped ---"
+
 if [ "${RUN_GC:-true}" = "true" ]; then
   echo "=== Running nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS} on $hostname ==="
   # shellcheck disable=SC2086  # intentional word-splitting on extra args
