@@ -80,11 +80,20 @@ ssh_opts=(
   -o StrictHostKeyChecking=yes
 )
 
+# Unique hosts in first-seen order (so we can check fail-fast per-host below).
+host_order=()
+declare -A host_seen=()
+for st in "${ssh_targets[@]}"; do
+  if [ -z "${host_seen[$st]:-}" ]; then
+    host_seen["$st"]=1
+    host_order+=("$st")
+  fi
+done
+
 # Per-repo cache directory (memoized).
 declare -A repo_cache_dir=()
 # Accumulated paths per ssh_target.
 declare -A paths_for_target=()
-target_order=()
 
 for i in "${!ssh_targets[@]}"; do
   st="${ssh_targets[$i]}"
@@ -119,9 +128,8 @@ for i in "${!ssh_targets[@]}"; do
   ' "$d"/eval-cache-*.json | sort -u)
 
   if [ -z "$paths" ]; then
-    echo "FAIL: no eval-cache entries matched $repo#$attr for last $retain commits on default branch" >&2
-    echo "Add a `check-if-changed` step for that attr (so the cache has entries), then retry." >&2
-    exit 1
+    echo "WARN: no eval-cache entries matched $repo#$attr for last $retain commits — this target contributes 0 paths to $st" >&2
+    continue
   fi
 
   count=$(printf '%s\n' "$paths" | wc -l)
@@ -129,11 +137,28 @@ for i in "${!ssh_targets[@]}"; do
 
   if [ -z "${paths_for_target[$st]:-}" ]; then
     paths_for_target["$st"]="$paths"
-    target_order+=("$st")
   else
     paths_for_target["$st"]=$(printf '%s\n%s' "${paths_for_target[$st]}" "$paths" | sort -u)
   fi
 done
+
+# Per-host fail-fast: every configured host must have at least one path,
+# otherwise nix-collect-garbage there would run with an empty gcroot set
+# and wipe the store.
+empty_hosts=()
+for st in "${host_order[@]}"; do
+  if [ -z "${paths_for_target[$st]:-}" ]; then
+    empty_hosts+=("$st")
+  fi
+done
+if [ ${#empty_hosts[@]} -gt 0 ]; then
+  echo "FAIL: the following host(s) have 0 paths across all their targets:" >&2
+  for h in "${empty_hosts[@]}"; do
+    echo "  - $h" >&2
+  done
+  echo "Add `check-if-changed`/`eval` steps for the missing attrs so the cache has entries, then retry." >&2
+  exit 1
+fi
 
 # Inline remote script. Nix store paths contain no shell metacharacters,
 # so passing them space-separated on the command line is safe.
@@ -152,7 +177,7 @@ nix-collect-garbage --delete-older-than 7d
 REMOTE
 )
 
-for st in "${target_order[@]}"; do
+for st in "${host_order[@]}"; do
   paths="${paths_for_target[$st]}"
   count=$(printf '%s\n' "$paths" | wc -l)
   echo "=== GC on $st ($count path(s)) ==="
