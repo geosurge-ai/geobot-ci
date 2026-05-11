@@ -75,26 +75,57 @@ runs:
         SHARD=$(printf '%s' "$KEY" | sha256sum | cut -c1)
         WORKDIR=$(mktemp -d)
         STATE_FILE="$WORKDIR/eval-cache-$SHARD.json"
-
-        if ! nix run nixpkgs#gh -- release download \
-          "geobot-ci-eval-cache" \
-          --repo "$REPOSITORY" \
-          --pattern "eval-cache-$SHARD.json" \
-          --output "$STATE_FILE" \
-          2>/dev/null; then
-          echo '{}' > "$STATE_FILE"
-        fi
-
         NEW_FILE="$WORKDIR/new-eval-cache-$SHARD.json"
-        nix run nixpkgs#jq -- --arg k "$KEY" --slurpfile v "$EVAL_FILE" '.[$k] = $v[0]' "$STATE_FILE" > "$NEW_FILE"
-        mv "$NEW_FILE" "$STATE_FILE"
 
-        nix run nixpkgs#gh -- release upload \
-          "geobot-ci-eval-cache" \
-          "$STATE_FILE" \
-          --repo "$REPOSITORY" \
-          --clobber
-        echo "Recorded $KEY to shard $SHARD"
+        fetch_state() {
+          if ! nix run nixpkgs#gh -- release download \
+            "geobot-ci-eval-cache" \
+            --repo "$REPOSITORY" \
+            --pattern "eval-cache-$SHARD.json" \
+            --output "$STATE_FILE" \
+            --clobber \
+            2>/dev/null; then
+            echo '{}' > "$STATE_FILE"
+          fi
+        }
+        key_present() {
+          [ "$(nix run nixpkgs#jq -- --arg k "$KEY" 'has($k)' "$STATE_FILE")" = "true" ]
+        }
+        merge_entry() {
+          nix run nixpkgs#jq -- --arg k "$KEY" --slurpfile v "$EVAL_FILE" '.[$k] = $v[0]' "$STATE_FILE" > "$NEW_FILE"
+          mv "$NEW_FILE" "$STATE_FILE"
+        }
+
+        fetch_state
+        if key_present; then
+          echo "Already recorded $KEY in shard $SHARD; no upload needed"
+          exit 0
+        fi
+        merge_entry
+
+        attempts=5
+        for attempt in $(seq 1 $attempts); do
+          if nix run nixpkgs#gh -- release upload \
+               "geobot-ci-eval-cache" \
+               "$STATE_FILE" \
+               --repo "$REPOSITORY" \
+               --clobber 2>&1; then
+            echo "Recorded $KEY to shard $SHARD (attempt $attempt)"
+            exit 0
+          fi
+          if [ "$attempt" -eq "$attempts" ]; then
+            echo "FAIL: upload of $KEY to shard $SHARD failed after $attempts attempts" >&2
+            exit 1
+          fi
+          echo "Upload attempt $attempt failed; re-fetching state and retrying..." >&2
+          sleep "$attempt"
+          fetch_state
+          if key_present; then
+            echo "Another job recorded $KEY meanwhile; no-op"
+            exit 0
+          fi
+          merge_entry
+        done
 
     - name: Check if already succeeded
       id: check
