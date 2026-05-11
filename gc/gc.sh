@@ -116,7 +116,7 @@ for i in "${!ssh_targets[@]}"; do
   echo "Fetching last $retain commits of $repo default branch..."
   shas_csv=$(nix run nixpkgs#gh -- api "repos/$repo/commits?per_page=$retain" --jq '.[].sha' | tr '\n' ',' | sed 's/,$//')
 
-  paths=$(nix run nixpkgs#jq -- -s -r \
+  mapping=$(nix run nixpkgs#jq -- -s -r \
     --arg attr "$attr" \
     --arg shas "$shas_csv" '
     ($shas | split(",")) as $shaset |
@@ -124,16 +124,20 @@ for i in "${!ssh_targets[@]}"; do
     (.key | capture("rev=(?<rev>[0-9a-f]+)#(?<a>.+)$")) as $p |
     select($p.a == $attr) |
     select($shaset | index($p.rev)) |
-    .value.outputs[]
-  ' "$d"/eval-cache-*.json | sort -u)
+    .value.outputs | to_entries[] | "\($p.rev[0:10]) \(.key) \(.value)"
+  ' "$d"/eval-cache-*.json)
 
-  if [ -z "$paths" ]; then
+  if [ -z "$mapping" ]; then
     echo "WARN: no eval-cache entries matched $repo#$attr for last $retain commits — this target contributes 0 paths to $st" >&2
     continue
   fi
 
+  echo "Cache entries matched (rev | output | path):"
+  printf '%s\n' "$mapping" | sed 's/^/  /'
+
+  paths=$(printf '%s\n' "$mapping" | awk '{print $3}' | sort -u)
   count=$(printf '%s\n' "$paths" | wc -l)
-  echo "Matched $count path(s)"
+  echo "→ $count unique outPath(s) for $st"
 
   if [ -z "${paths_for_target[$st]:-}" ]; then
     paths_for_target["$st"]="$paths"
@@ -172,6 +176,8 @@ echo "RUN_GC=$run_gc (will$([ "$run_gc" = "true" ] || echo " NOT") run nix-colle
 remote_script=$(cat <<'REMOTE'
 set -eu
 gcroot_dir="/nix/var/nix/gcroots/repo-gcroot"
+hostname=$(hostname)
+echo "--- Resetting $gcroot_dir on $hostname ---"
 rm -rf "$gcroot_dir"
 mkdir -p "$gcroot_dir"
 created=0
@@ -179,14 +185,16 @@ skipped=0
 for store_path in "$@"; do
   if [ -e "$store_path" ]; then
     ln -sfn "$store_path" "$gcroot_dir/$(basename "$store_path")"
+    echo "  [+] gcroot  $store_path"
     created=$((created + 1))
   else
+    echo "  [-] missing $store_path"
     skipped=$((skipped + 1))
   fi
 done
-echo "Installed $created gcroot symlinks in $gcroot_dir (skipped $skipped paths not in store) on $(hostname)"
+echo "--- $hostname summary: $created added, $skipped skipped ---"
 if [ "${RUN_GC:-true}" = "true" ]; then
-  echo "=== Running nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS} on $(hostname) ==="
+  echo "=== Running nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS} on $hostname ==="
   # shellcheck disable=SC2086  # intentional word-splitting on extra args
   nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS}
 else
