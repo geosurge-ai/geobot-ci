@@ -77,16 +77,28 @@ runs:
         STATE_FILE="$WORKDIR/eval-cache-$SHARD.json"
         NEW_FILE="$WORKDIR/new-eval-cache-$SHARD.json"
 
+        # `gh release upload --clobber` is delete-then-POST and not atomic.
+        # During the brief gap a concurrent download returns 404. Without inner
+        # retry we'd treat that as "asset empty", and the subsequent clobber
+        # would wipe every previously-recorded entry on the shard. 3 attempts
+        # with backoff outlast the clobber window; only a truly-absent asset
+        # (first job ever for this shard) reaches the empty fallback.
         fetch_state() {
-          if ! nix run nixpkgs#gh -- release download \
-            "geobot-ci-eval-cache" \
-            --repo "$REPOSITORY" \
-            --pattern "eval-cache-$SHARD.json" \
-            --output "$STATE_FILE" \
-            --clobber \
-            2>/dev/null; then
-            echo '{}' > "$STATE_FILE"
-          fi
+          for i in 1 2 3; do
+            if nix run nixpkgs#gh -- release download \
+              "geobot-ci-eval-cache" \
+              --repo "$REPOSITORY" \
+              --pattern "eval-cache-$SHARD.json" \
+              --output "$STATE_FILE" \
+              --clobber \
+              2>/dev/null; then
+              return 0
+            fi
+            if [ "$i" -lt 3 ]; then
+              sleep "$i"
+            fi
+          done
+          echo '{}' > "$STATE_FILE"
         }
         key_present() {
           [ "$(nix run nixpkgs#jq -- --arg k "$KEY" 'has($k)' "$STATE_FILE")" = "true" ]
