@@ -62,6 +62,7 @@ runs:
     - name: Record eval result
       shell: bash
       env:
+        NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"
         GH_TOKEN: ${{ github.token }}
         REPOSITORY: ${{ github.repository }}
         KEY: ${{ steps.eval.outputs.key }}
