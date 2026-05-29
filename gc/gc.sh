@@ -155,12 +155,31 @@ for i in "${!ssh_targets[@]}"; do
   paths_for_target_id["$st|$tid"]="$paths"
 done
 
-run_gc="${RUN_GC:-true}"
-case "$run_gc" in
-  true|false) ;;
-  *) echo "ERROR: RUN_GC must be 'true' or 'false', got '$run_gc'" >&2; exit 1 ;;
-esac
-echo "RUN_GC=$run_gc (will$([ "$run_gc" = "true" ] || echo " NOT") run nix-collect-garbage)"
+# COLLECT_HOSTS: space/newline-separated ssh_targets on which to actually run
+# nix-collect-garbage. Hosts not listed only have their gcroots refreshed.
+# Empty (default) collects nowhere.
+declare -A collect_set=()
+collect_list=()
+for h in ${COLLECT_HOSTS:-}; do
+  collect_set["$h"]=1
+  collect_list+=("$h")
+done
+
+# Typo guard: a collect host that matches no target ssh_target would silently
+# collect on the wrong host (or nowhere), so fail loudly instead.
+for h in "${collect_list[@]+"${collect_list[@]}"}"; do
+  if [ -z "${host_seen[$h]:-}" ]; then
+    echo "ERROR: collect_hosts entry '$h' is not among the target ssh_targets" >&2
+    echo "Known ssh_targets: ${host_order[*]}" >&2
+    exit 1
+  fi
+done
+
+if [ "${#collect_list[@]}" -eq 0 ]; then
+  echo "COLLECT_HOSTS empty: refreshing gcroots only, no nix-collect-garbage on any host"
+else
+  echo "COLLECT_HOSTS: will run nix-collect-garbage on: ${collect_list[*]}"
+fi
 
 # Inline remote script. Nix store paths contain no shell metacharacters,
 # so passing them space-separated on the command line is safe.
@@ -234,21 +253,24 @@ echo "--- $hostname summary: $host_added added, $host_skipped skipped across $ta
 
 # Per-host fail-fast: if every target was empty, don't run nix-collect-garbage.
 if [ "$host_added" -eq 0 ]; then
-  if [ "${RUN_GC:-true}" = "true" ]; then
+  if [ "${RUN_GC:-false}" = "true" ]; then
     echo "FAIL: 0 gcroots installed across all targets on $hostname — refusing nix-collect-garbage" >&2
     exit 1
   else
-    echo "WARN: 0 gcroots installed across all targets on $hostname (RUN_GC=false; existing subdirs preserved)" >&2
+    echo "WARN: 0 gcroots installed across all targets on $hostname (collection not enabled for this host; existing subdirs preserved)" >&2
     exit 0
   fi
 fi
 
-if [ "${RUN_GC:-true}" = "true" ]; then
+if [ "${RUN_GC:-false}" = "true" ]; then
   echo "=== Running nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS} on $hostname ==="
+  _ncg_start=$(date +%s)
   # shellcheck disable=SC2086  # intentional word-splitting on extra args
   nix-collect-garbage ${NIX_COLLECT_GARBAGE_ARGS}
+  _ncg_end=$(date +%s)
+  echo "=== nix-collect-garbage on $hostname took $((_ncg_end - _ncg_start))s ==="
 else
-  echo "=== Skipping nix-collect-garbage (RUN_GC=false). Inspect gcroots with: ls -la $gcroot_root ==="
+  echo "=== Skipping nix-collect-garbage (host not in collect_hosts). Inspect gcroots with: ls -la $gcroot_root ==="
 fi
 REMOTE
 )
@@ -270,10 +292,11 @@ for st in "${host_order[@]}"; do
   done
   args+=(END)
 
-  echo "=== Sending to $st: $host_total_paths path(s) across $host_target_count target(s) ==="
+  if [ -n "${collect_set[$st]:-}" ]; then host_run_gc=true; else host_run_gc=false; fi
+  echo "=== Sending to $st: $host_total_paths path(s) across $host_target_count target(s) (collect=$host_run_gc) ==="
   ncg_args_quoted=$(printf '%q' "${NIX_COLLECT_GARBAGE_ARGS:-}")
   # shellcheck disable=SC2029
-  ssh "${ssh_opts[@]}" "$st" "RUN_GC=$run_gc NIX_COLLECT_GARBAGE_ARGS=$ncg_args_quoted bash -s -- ${args[*]}" <<< "$remote_script"
+  ssh "${ssh_opts[@]}" "$st" "RUN_GC=$host_run_gc NIX_COLLECT_GARBAGE_ARGS=$ncg_args_quoted bash -s -- ${args[*]}" <<< "$remote_script"
 done
 
 echo "=== All done ==="

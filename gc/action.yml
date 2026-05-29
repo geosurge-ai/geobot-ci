@@ -13,6 +13,10 @@ description: |
   Multiple targets sharing an ssh_target are accumulated into one SSH session.
   Aborts if any target's cache lookup yields zero paths (prevents wiping the store).
 
+  Collection is per-host: only hosts listed in `collect_hosts` actually run
+  `nix-collect-garbage`; every other host just has its gcroots refreshed. The
+  default (empty) collects nowhere.
+
 inputs:
   geobot_ssh_key:
     required: true
@@ -20,14 +24,16 @@ inputs:
   targets:
     required: true
     description: "Newline-separated GC targets — see action description"
-  run_gc:
+  collect_hosts:
     required: false
-    default: "true"
+    default: ""
     description: |
-      If "true" (default), run `nix-collect-garbage` after updating gcroots.
-      If "false", only refresh the gcroots (wipe and recreate symlinks) and
-      skip the actual collection — useful for testing or just keeping the
-      gcroot set in sync without sweeping.
+      Space/newline-separated list of ssh_targets (matching the first field of
+      a target line) on which to actually run `nix-collect-garbage` after
+      refreshing gcroots. Any host not listed only has its gcroots refreshed
+      (wipe + recreate symlinks) and is never swept. Empty (default) collects
+      nowhere — useful for keeping the gcroot set in sync without sweeping.
+      Each entry must match a known ssh_target or the run aborts (typo guard).
   nix_collect_garbage_args:
     required: false
     default: ""
@@ -54,6 +60,6 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         TARGETS: ${{ inputs.targets }}
-        RUN_GC: ${{ inputs.run_gc }}
+        COLLECT_HOSTS: ${{ inputs.collect_hosts }}
         NIX_COLLECT_GARBAGE_ARGS: ${{ inputs.nix_collect_garbage_args }}
       run: bash "$GITHUB_ACTION_PATH/gc.sh"
