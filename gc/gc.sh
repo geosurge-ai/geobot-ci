@@ -148,7 +148,7 @@ for i in "${!ssh_targets[@]}"; do
   echo "Cache entries matched (rev | output | path):"
   printf '%s\n' "$mapping" | sed 's/^/  /'
 
-  paths=$(printf '%s\n' "$mapping" | awk '{print $3}' | sort -u)
+  paths=$(printf '%s\n' "$mapping" | cut -d' ' -f3 | sort -u)
   count=$(printf '%s\n' "$paths" | wc -l)
   echo "→ $count unique outPath(s) for target $tid on $st"
 
