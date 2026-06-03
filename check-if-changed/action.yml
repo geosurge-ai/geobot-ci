@@ -147,6 +147,18 @@ runs:
         BIN: ${{ steps.eval.outputs.bin }}
         REPOSITORY: ${{ github.repository }}
       run: |
+        # Fast path: if the output path is already present in the local
+        # /nix/store, the build is done — short-circuit before the
+        # ~15s gh-release-download roundtrip. Local presence is strictly
+        # safer than the succeed-list (which can record paths that have
+        # since been GC'd). The slow path below remains the source of
+        # truth for cross-runner / cold-cache scenarios.
+        if [ -e "$BIN" ]; then
+          echo "Already built (local /nix/store hit), skipping"
+          echo "skip=true" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
         SHARD=${BIN:11:1}
         STATE_FILE=$(mktemp)
 
@@ -158,7 +170,7 @@ runs:
           --clobber \
           2>/dev/null; then
           if grep -qxF "$BIN" "$STATE_FILE"; then
-            echo "Already succeeded, skipping"
+            echo "Already succeeded (per succeed-list), skipping"
             echo "skip=true" >> $GITHUB_OUTPUT
             exit 0
           fi
