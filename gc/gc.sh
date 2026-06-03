@@ -119,16 +119,16 @@ for i in "${!ssh_targets[@]}"; do
     d="$workdir/cache/${repo//\//__}"
     mkdir -p "$d"
     echo "Downloading eval-cache for $repo..."
-    nix run nixpkgs#gh -- release download geobot-ci-eval-cache \
+    gh release download geobot-ci-eval-cache \
       --repo "$repo" --pattern "eval-cache-*.json" --dir "$d" --clobber
     repo_cache_dir["$repo"]="$d"
   fi
   d="${repo_cache_dir[$repo]}"
 
   echo "Fetching last $retain commits of $repo default branch..."
-  shas_csv=$(nix run nixpkgs#gh -- api "repos/$repo/commits?per_page=$retain" --jq '.[].sha' | tr '\n' ',' | sed 's/,$//')
+  shas_csv=$(gh api "repos/$repo/commits?per_page=$retain" --jq '.[].sha' | tr '\n' ',' | sed 's/,$//')
 
-  mapping=$(nix run nixpkgs#jq -- -s -r \
+  mapping=$(jq -s -r \
     --arg attr "$attr" \
     --arg shas "$shas_csv" '
     ($shas | split(",")) as $shaset |

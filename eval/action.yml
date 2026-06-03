@@ -81,7 +81,7 @@ runs:
         # (first job ever for this shard) reaches the empty fallback.
         fetch_state() {
           for i in 1 2 3; do
-            if nix run nixpkgs#gh -- release download \
+            if gh release download \
               "geobot-ci-eval-cache" \
               --repo "$REPOSITORY" \
               --pattern "eval-cache-$SHARD.json" \
@@ -97,10 +97,10 @@ runs:
           echo '{}' > "$STATE_FILE"
         }
         key_present() {
-          [ "$(nix run nixpkgs#jq -- --arg k "$KEY" 'has($k)' "$STATE_FILE")" = "true" ]
+          [ "$(jq --arg k "$KEY" 'has($k)' "$STATE_FILE")" = "true" ]
         }
         merge_entry() {
-          nix run nixpkgs#jq -- --arg k "$KEY" --slurpfile v "$EVAL_FILE" '.[$k] = $v[0]' "$STATE_FILE" > "$NEW_FILE"
+          jq --arg k "$KEY" --slurpfile v "$EVAL_FILE" '.[$k] = $v[0]' "$STATE_FILE" > "$NEW_FILE"
           mv "$NEW_FILE" "$STATE_FILE"
         }
 
@@ -113,7 +113,7 @@ runs:
 
         attempts=5
         for attempt in $(seq 1 $attempts); do
-          if nix run nixpkgs#gh -- release upload \
+          if gh release upload \
                "geobot-ci-eval-cache" \
                "$STATE_FILE" \
                --repo "$REPOSITORY" \
