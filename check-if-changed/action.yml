@@ -49,7 +49,39 @@ runs:
         REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
         KEY="git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE"
-        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; outputs = builtins.listToAttrs (map (n: { name = n; value = drv.${n}.outPath; }) drv.outputs); mainProgram = drv.meta.mainProgram; }')
+        # Retry on SQLite "is busy" errors from Nix's fetcher-cache.
+        #
+        # Nix has two SQLite caches that parallel jobs sharing
+        # $XDG_CACHE_HOME contend on:
+        #   - eval-cache  (libexpr/eval-cache.cc)  — wrapped in
+        #     try { ... } catch (SQLiteError &) { ignoreException(); },
+        #     so a busy write logs "error (ignored): ... is busy" and the
+        #     eval falls back to uncached mode. Cosmetic noise, exit 0.
+        #   - fetcher-cache (libfetchers/cache.cc) — NOT wrapped. A busy
+        #     write propagates as a fatal SQLiteError, nix eval exits 1,
+        #     the job fails.
+        #
+        # The asymmetry is an unflagged code wart; no upstream issue/PR
+        # tracks it. Closest related: NixOS/nix#6656 (open, cosmetic only,
+        # 2022) and NixOS/nix#3794 (closed, eval-cache only, 2020). Until
+        # libfetchers/cache.cc gets the same ignoreException wrapper, we
+        # mitigate at the action level by retrying on "is busy" with
+        # backoff. Only the failure path waits — parallel success paths
+        # are unaffected.
+        attempts=5
+        for attempt in $(seq 1 "$attempts"); do
+          if RESULT=$(nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; outputs = builtins.listToAttrs (map (n: { name = n; value = drv.${n}.outPath; }) drv.outputs); mainProgram = drv.meta.mainProgram; }' 2>"$RUNNER_TEMP/nix-eval.err"); then
+            cat "$RUNNER_TEMP/nix-eval.err" >&2
+            break
+          fi
+          if [ "$attempt" -lt "$attempts" ] && grep -q "is busy" "$RUNNER_TEMP/nix-eval.err"; then
+            echo "nix eval hit busy SQLite (attempt $attempt); retrying after $((attempt * 2))s" >&2
+            sleep "$((attempt * 2))"
+            continue
+          fi
+          cat "$RUNNER_TEMP/nix-eval.err" >&2
+          exit 1
+        done
         DRV=$(echo "$RESULT" | jq -r '.drv')
         OUT=$(echo "$RESULT" | jq -r '.out')
         MAIN=$(echo "$RESULT" | jq -r '.mainProgram')

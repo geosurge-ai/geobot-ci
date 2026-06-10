@@ -51,7 +51,23 @@ runs:
         REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
         KEY="git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE"
-        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; outputs = builtins.listToAttrs (map (n: { name = n; value = drv.${n}.outPath; }) drv.outputs); mainProgram = drv.meta.mainProgram or null; }')
+        # Retry on SQLite "is busy" errors from Nix's fetcher-cache.
+        # See check-if-changed/action.yml for the full upstream-context
+        # comment — same mitigation, same reasoning.
+        attempts=5
+        for attempt in $(seq 1 "$attempts"); do
+          if RESULT=$(nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; outputs = builtins.listToAttrs (map (n: { name = n; value = drv.${n}.outPath; }) drv.outputs); mainProgram = drv.meta.mainProgram or null; }' 2>"$RUNNER_TEMP/nix-eval.err"); then
+            cat "$RUNNER_TEMP/nix-eval.err" >&2
+            break
+          fi
+          if [ "$attempt" -lt "$attempts" ] && grep -q "is busy" "$RUNNER_TEMP/nix-eval.err"; then
+            echo "nix eval hit busy SQLite (attempt $attempt); retrying after $((attempt * 2))s" >&2
+            sleep "$((attempt * 2))"
+            continue
+          fi
+          cat "$RUNNER_TEMP/nix-eval.err" >&2
+          exit 1
+        done
         EVAL_FILE="$RUNNER_TEMP/geobot-eval-result.json"
         printf '%s' "$RESULT" > "$EVAL_FILE"
         echo "key=$KEY" >> $GITHUB_OUTPUT
