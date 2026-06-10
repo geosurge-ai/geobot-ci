@@ -49,14 +49,7 @@ runs:
         REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
         KEY="git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE"
-        # Serialize nix eval across runner slots sharing XDG_CACHE_HOME.
-        # eval-cache-v5/*.sqlite is single-writer; without this, parallel
-        # jobs race, "SQLite database is busy" fires, and Nix falls back
-        # to uncached eval (correct but slow, and noisy in logs).
-        CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
-        mkdir -p "$CACHE_HOME/nix"
-        LOCK="$CACHE_HOME/nix/geobot-ci-eval.lock"
-        RESULT=$(flock -w 120 "$LOCK" nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; outputs = builtins.listToAttrs (map (n: { name = n; value = drv.${n}.outPath; }) drv.outputs); mainProgram = drv.meta.mainProgram; }')
+        RESULT=$(nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; outputs = builtins.listToAttrs (map (n: { name = n; value = drv.${n}.outPath; }) drv.outputs); mainProgram = drv.meta.mainProgram; }')
         DRV=$(echo "$RESULT" | jq -r '.drv')
         OUT=$(echo "$RESULT" | jq -r '.out')
         MAIN=$(echo "$RESULT" | jq -r '.mainProgram')
