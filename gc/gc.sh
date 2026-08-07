@@ -3,7 +3,7 @@
 #
 # Reads $TARGETS (4-field lines), looks up store paths in the consumer repo's
 # geobot-ci-eval-cache release, then SSHes to each target host to install
-# gcroots and run `nix-collect-garbage --delete-older-than 7d`.
+# gcroots and run `nix-collect-garbage $NIX_COLLECT_GARBAGE_ARGS`.
 #
 # No `nix eval` is performed; the cache is the source of truth.
 
@@ -193,6 +193,7 @@ mkdir -p "$gcroot_root"
 #   TARGET <target_id> <path1> <path2> ... [TARGET ...] END
 # Nix store paths can't conflict with the TARGET/END keywords (paths start
 # with /), so no count or escaping is needed.
+host_input=0
 host_added=0
 host_skipped=0
 targets_total=0
@@ -210,6 +211,7 @@ while [ "$#" -gt 0 ]; do
         target_paths+=("$1"); shift
       done
 
+      host_input=$((host_input + ${#target_paths[@]}))
       target_subdir="$gcroot_root/$tid"
 
       # Classify
@@ -251,15 +253,25 @@ done
 
 echo "--- $hostname summary: $host_added added, $host_skipped skipped across $targets_total target(s); $targets_empty had 0 installable (subdirs preserved) ---"
 
-# Per-host fail-fast: if every target was empty, don't run nix-collect-garbage.
-if [ "$host_added" -eq 0 ]; then
+# Per-host fail-fast, on the count of paths the cache *resolved* rather than the
+# count actually rooted. Zero resolved paths means the eval-cache lookup told us
+# nothing, so collecting would sweep a store we have no roots for — refuse.
+# Resolved paths that merely aren't present here are a different case: this host
+# never built them, so there is nothing of theirs to protect and collection is
+# safe. Every target's existing subdir is preserved either way, so roots from
+# earlier runs still guard whatever they point at.
+if [ "$host_input" -eq 0 ]; then
   if [ "${RUN_GC:-false}" = "true" ]; then
-    echo "FAIL: 0 gcroots installed across all targets on $hostname — refusing nix-collect-garbage" >&2
+    echo "FAIL: cache resolved 0 paths for $hostname — refusing nix-collect-garbage" >&2
     exit 1
   else
-    echo "WARN: 0 gcroots installed across all targets on $hostname (collection not enabled for this host; existing subdirs preserved)" >&2
+    echo "WARN: cache resolved 0 paths for $hostname (collection not enabled for this host; existing subdirs preserved)" >&2
     exit 0
   fi
+fi
+
+if [ "$host_added" -eq 0 ]; then
+  echo "NOTE: none of the $host_input resolved path(s) are present on $hostname — nothing new to root"
 fi
 
 if [ "${RUN_GC:-false}" = "true" ]; then

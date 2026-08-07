@@ -11,7 +11,9 @@ description: |
     root@34.13.40.72 geosurge-ai/grim-monolith#checks.x86_64-linux.push 100 ssh-ed25519 AAAAC3NzaC1...
 
   Multiple targets sharing an ssh_target are accumulated into one SSH session.
-  Aborts if any target's cache lookup yields zero paths (prevents wiping the store).
+  Aborts before collecting on a host whose targets resolve zero paths between
+  them, since that indicates a broken cache lookup rather than a genuinely empty
+  retention set (prevents wiping the store).
 
   Collection is per-host: only hosts listed in `collect_hosts` actually run
   `nix-collect-garbage`; every other host just has its gcroots refreshed. The
