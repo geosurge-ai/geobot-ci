@@ -55,7 +55,7 @@ runs:
         chmod 600 $HOME/.ssh/id_ed25519
         echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> $HOME/.ssh/known_hosts
         chmod 600 $HOME/.ssh/known_hosts
-        echo "GIT_SSH_COMMAND=ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes" >> $GITHUB_ENV
+        echo "GIT_SSH_COMMAND=ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes" >> $GITHUB_ENV
 
     - name: Run GC
       shell: bash

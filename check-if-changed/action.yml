@@ -12,6 +12,10 @@ inputs:
     required: false
     default: ""
     description: "Extra flags for nix eval"
+  eval_timeout:
+    required: false
+    default: "600"
+    description: "Seconds each nix eval attempt may run before it is killed and retried"
 
 outputs:
   bin:
@@ -31,6 +35,9 @@ runs:
         echo "Host *" > $HOME/.ssh/config
         echo "  IdentityFile $HOME/.ssh/id_ed25519" >> $HOME/.ssh/config
         echo "  IdentitiesOnly yes" >> $HOME/.ssh/config
+        echo "  ConnectTimeout 30" >> $HOME/.ssh/config
+        echo "  ServerAliveInterval 15" >> $HOME/.ssh/config
+        echo "  ServerAliveCountMax 4" >> $HOME/.ssh/config
         echo "  UserKnownHostsFile $HOME/.ssh/known_hosts" >> $HOME/.ssh/config
         echo "  StrictHostKeyChecking yes" >> $HOME/.ssh/config
         chmod 600 $HOME/.ssh/config
@@ -44,42 +51,53 @@ runs:
         NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"
         PACKAGE: ${{ inputs.package }}
         NIX_EVAL_FLAGS: ${{ inputs.nix_eval_flags }}
+        EVAL_TIMEOUT: ${{ inputs.eval_timeout }}
         REPOSITORY: ${{ github.repository }}
         REF: ${{ github.head_ref || github.ref_name }}
         REV: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
         KEY="git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE"
-        # Retry on SQLite "is busy" errors from Nix's fetcher-cache.
+        # Bound each eval attempt. Two shared-state waits inside `nix eval`
+        # are unbounded, and on vortex every runner slot shares one
+        # XDG_CACHE_HOME (/var/cache/github-runners-shared), so both are
+        # contended machine-wide:
         #
-        # Nix has two SQLite caches that parallel jobs sharing
-        # $XDG_CACHE_HOME contend on:
-        #   - eval-cache  (libexpr/eval-cache.cc)  — wrapped in
-        #     try { ... } catch (SQLiteError &) { ignoreException(); },
-        #     so a busy write logs "error (ignored): ... is busy" and the
-        #     eval falls back to uncached mode. Cosmetic noise, exit 0.
-        #   - fetcher-cache (libfetchers/cache.cc) — NOT wrapped. A busy
-        #     write propagates as a fatal SQLiteError, nix eval exits 1,
-        #     the job fails.
+        #   - The fetcher lock. Lix's Cache::lookupOrLock flocks
+        #     $XDG_CACHE_HOME/nix/fetcher-lock-<hash of the input attrs>
+        #     and holds it across the whole fetch. It takes that flock via
+        #     lockPathAsync, which has no timeout and -- unlike the sync
+        #     lockPath -- never prints its waitMsg. The hash covers only
+        #     repo+ref+rev, so every job on a given commit queues on one
+        #     lock file regardless of which package it evaluates, and a
+        #     single stalled holder silently wedges all of them.
+        #   - The fetcher cache. Lix retries SQLITE_BUSY in an uncapped
+        #     `while (true)` loop (retrySQLite), sleeping <=0.1s per try
+        #     and warning at most once per 10s.
         #
-        # The asymmetry is an unflagged code wart; no upstream issue/PR
-        # tracks it. Closest related: NixOS/nix#6656 (open, cosmetic only,
-        # 2022) and NixOS/nix#3794 (closed, eval-cache only, 2020). Until
-        # libfetchers/cache.cc gets the same ignoreException wrapper, we
-        # mitigate at the action level by retrying on "is busy" with
-        # backoff. Only the failure path waits — parallel success paths
-        # are unaffected.
-        attempts=5
+        # Neither wait can fail on its own, so absent a timeout a transient
+        # stall becomes an unbounded hang -- observed as 70-83min steps
+        # with no output at all, ended only by cancelling the job. A real
+        # eval takes ~2-3min, so cap the attempt and retry: killing the
+        # eval also drops its flock, letting the next job through.
+        attempts=3
         for attempt in $(seq 1 "$attempts"); do
-          if RESULT=$(nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; outputs = builtins.listToAttrs (map (n: { name = n; value = drv.${n}.outPath; }) drv.outputs); mainProgram = drv.meta.mainProgram; }' 2>"$RUNNER_TEMP/nix-eval.err"); then
-            cat "$RUNNER_TEMP/nix-eval.err" >&2
+          RESULT=$(timeout -k 30 "$EVAL_TIMEOUT" nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; outputs = builtins.listToAttrs (map (n: { name = n; value = drv.${n}.outPath; }) drv.outputs); mainProgram = drv.meta.mainProgram; }' 2>"$RUNNER_TEMP/nix-eval.err") && status=0 || status=$?
+          cat "$RUNNER_TEMP/nix-eval.err" >&2
+          if [ "$status" -eq 0 ]; then
             break
           fi
-          if [ "$attempt" -lt "$attempts" ] && grep -q "is busy" "$RUNNER_TEMP/nix-eval.err"; then
-            echo "nix eval hit busy SQLite (attempt $attempt); retrying after $((attempt * 2))s" >&2
-            sleep "$((attempt * 2))"
-            continue
+          if [ "$attempt" -lt "$attempts" ]; then
+            if [ "$status" -eq 124 ]; then
+              echo "nix eval exceeded ${EVAL_TIMEOUT}s (attempt $attempt); likely contention on the shared Nix fetcher lock. Retrying after $((attempt * 10))s" >&2
+              sleep "$((attempt * 10))"
+              continue
+            fi
+            if grep -q "is busy" "$RUNNER_TEMP/nix-eval.err"; then
+              echo "nix eval hit busy SQLite (attempt $attempt); retrying after $((attempt * 2))s" >&2
+              sleep "$((attempt * 2))"
+              continue
+            fi
           fi
-          cat "$RUNNER_TEMP/nix-eval.err" >&2
           exit 1
         done
         DRV=$(echo "$RESULT" | jq -r '.drv')
