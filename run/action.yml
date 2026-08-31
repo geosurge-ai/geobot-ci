@@ -38,10 +38,9 @@ runs:
         echo "NIX_SSHOPTS=-F $HOME/.ssh/config" >> $GITHUB_ENV
         echo "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config" >> $GITHUB_ENV
 
-    # Re-check succeed list before running. The first read happens in
-    # check-if-rerun-required-and-build, before a build that can take an hour;
-    # with concurrency groups, jobs then queue behind it. A sibling may have
-    # recorded our bin in that window, so ask again.
+    # Re-check succeed list before running. When using concurrency groups, multiple jobs
+    # wait in queue. After the previous job finishes, check if it already recorded our
+    # bin as succeeded - if so, skip running.
     #
     # Example with 3 jobs having the same bin=X:
     # 1. Job A (bin=X) runs
@@ -50,7 +49,7 @@ runs:
     # 4. Job A finishes, records bin=X as succeeded
     # 5. Job B starts, re-checks succeed list -> finds bin=X -> skips
     # 6. Job C starts, re-checks succeed list -> finds bin=X -> skips
-    - name: Check if rerun required
+    - name: Check if already succeeded
       id: check
       shell: bash
       env:
@@ -70,15 +69,15 @@ runs:
           --clobber \
           2>/dev/null; then
           if grep -qxF "$BIN" "$STATE_FILE"; then
-            echo "Already succeeded; no rerun required"
-            echo "rerun-required=false" >> $GITHUB_OUTPUT
+            echo "Already succeeded, skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
             exit 0
           fi
         fi
-        echo "rerun-required=true" >> $GITHUB_OUTPUT
+        echo "skip=false" >> $GITHUB_OUTPUT
 
     - name: Run
-      if: steps.check.outputs.rerun-required == 'true'
+      if: steps.check.outputs.skip != 'true'
       shell: bash
       env:
         BIN: ${{ inputs.bin }}
@@ -106,7 +105,7 @@ runs:
         done
 
     - name: Record success
-      if: steps.check.outputs.rerun-required == 'true'
+      if: steps.check.outputs.skip != 'true'
       shell: bash
       env:
         NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"

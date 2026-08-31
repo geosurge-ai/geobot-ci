@@ -1,6 +1,6 @@
 ## Project Overview
 
-`geobot-ci` is a collection of small composite GitHub Actions (`check-if-rerun-required-and-build`, `eval`, `gc`, `run`, `setup`) shared by other Geosurge repos (mainly `grim-monolith`, `darksteel-forge`). Consumers pin by full commit SHA. There is no CI in this repo — actions are validated by running them in consumer workflows.
+`geobot-ci` is a collection of small composite GitHub Actions (`check-if-changed`, `eval`, `gc`, `run`, `setup`) shared by other Geosurge repos (mainly `grim-monolith`, `darksteel-forge`). Consumers pin by full commit SHA. There is no CI in this repo — actions are validated by running them in consumer workflows.
 
 ## Pushing changes
 
@@ -18,6 +18,6 @@ After pushing to main:
 
 ## Editing actions
 
-- `check-if-rerun-required-and-build/`, `eval/`, `gc/`, `run/`, `setup/` are each a composite action with an `action.yml`. Keep changes minimal — these run on every CI job of every consumer and a regression here fans out everywhere.
+- `check-if-changed/`, `eval/`, `gc/`, `run/`, `setup/` are each a composite action with an `action.yml`. Keep changes minimal — these run on every CI job of every consumer and a regression here fans out everywhere.
 - `nix eval` calls are wrapped in `timeout` (`eval_timeout`, default 600s) and retried. Every runner slot on vortex shares one `XDG_CACHE_HOME` (`/var/cache/github-runners-shared`), so concurrent evals contend on Lix's per-input fetcher lock (`$XDG_CACHE_HOME/nix/fetcher-lock-*`, keyed on repo+ref+rev and held across the whole fetch) and on its fetcher-cache SQLite. Lix waits on both without a timeout, so the `timeout` is what turns a stalled peer into a retryable failure rather than an unbounded silent hang. Serializing with `flock -w 120` was tried and reverted in 3ea0edc: 120s of queue depth across 64 slots made jobs hard-fail under load.
 - The release-asset cache (`geobot-ci-eval-cache`, `geobot-ci-succeed-list`) is per-consumer-repo and managed by the actions themselves; do not write to it from outside.

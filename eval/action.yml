@@ -61,7 +61,7 @@ runs:
         KEY="git+ssh://git@github.com/$REPOSITORY?ref=$REF&rev=$REV#$PACKAGE"
         # Bound each eval attempt: Lix waits without a timeout on both the
         # shared fetcher lock and the fetcher-cache SQLite, so a stalled
-        # peer hangs the eval indefinitely. See check-if-rerun-required-and-build/action.yml
+        # peer hangs the eval indefinitely. See check-if-changed/action.yml
         # for the full mechanism -- same mitigation, same reasoning.
         attempts=3
         for attempt in $(seq 1 "$attempts"); do
