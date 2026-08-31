@@ -1,9 +1,10 @@
-name: Check if run required
+name: Check if succeeded
 description: |
-  Evaluate a flake attribute and decide whether it still needs to be built and
-  run. Emits `drv` and `bin` when the succeed-list has no record of this output
-  path, and nothing when it does. Does not build: the caller builds `drv` and
-  passes `bin` to the `run` action.
+  Evaluate a flake attribute and report whether its output has already run
+  successfully, per the consumer repo's `geobot-ci-succeed-list` release.
+  Always emits `drv` and `bin`; `succeeded` is the gate. Does not build: the
+  caller builds `drv` when `succeeded` is not 'true', and passes `bin` to the
+  `run` action.
 
 inputs:
   geobot_ssh_key:
@@ -22,11 +23,14 @@ inputs:
     description: "Seconds each nix eval attempt may run before it is killed and retried"
 
 outputs:
+  succeeded:
+    description: "'true' if the succeed-list already records this output as run"
+    value: ${{ steps.check.outputs.succeeded }}
   bin:
-    description: "Full path to binary - empty if it already succeeded"
+    description: "Full path to binary"
     value: ${{ steps.check.outputs.bin }}
   drv:
-    description: "Derivation to build - empty if it already succeeded"
+    description: "Derivation to build"
     value: ${{ steps.check.outputs.drv }}
 
 runs:
@@ -205,9 +209,12 @@ runs:
         DRV: ${{ steps.eval.outputs.drv }}
         REPOSITORY: ${{ github.repository }}
       run: |
-        # Only the succeed-list may empty `bin`, because only `run` writes it,
-        # and only after the binary exited 0. Presence of $BIN in the local
-        # store means it was built, not that it ever ran.
+        # `succeeded` answers only what the succeed-list says, because only
+        # `run` writes it, and only after the binary exited 0. Presence of $BIN
+        # in the local store means it was built, not that it ever ran.
+        echo "bin=$BIN" >> $GITHUB_OUTPUT
+        echo "drv=$DRV" >> $GITHUB_OUTPUT
+
         SHARD=${BIN:11:1}
         STATE_FILE=$(mktemp)
 
@@ -219,9 +226,9 @@ runs:
           --clobber \
           2>/dev/null; then
           if grep -qxF "$BIN" "$STATE_FILE"; then
-            echo "Already succeeded (per succeed-list), skipping"
+            echo "Already succeeded (per succeed-list)"
+            echo "succeeded=true" >> $GITHUB_OUTPUT
             exit 0
           fi
         fi
-        echo "bin=$BIN" >> $GITHUB_OUTPUT
-        echo "drv=$DRV" >> $GITHUB_OUTPUT
+        echo "succeeded=false" >> $GITHUB_OUTPUT
