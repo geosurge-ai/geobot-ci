@@ -19,8 +19,8 @@ inputs:
 
 outputs:
   bin:
-    description: "Full path to binary - empty if should skip"
-    value: ${{ steps.build.outputs.bin }}
+    description: "Full path to binary - empty if it already succeeded"
+    value: ${{ steps.check.outputs.bin }}
 
 runs:
   using: composite
@@ -197,18 +197,9 @@ runs:
         BIN: ${{ steps.eval.outputs.bin }}
         REPOSITORY: ${{ github.repository }}
       run: |
-        # Fast path: if the output path is already present in the local
-        # /nix/store, the build is done — short-circuit before the
-        # ~15s gh-release-download roundtrip. Local presence is strictly
-        # safer than the succeed-list (which can record paths that have
-        # since been GC'd). The slow path below remains the source of
-        # truth for cross-runner / cold-cache scenarios.
-        if [ -e "$BIN" ]; then
-          echo "Already built (local /nix/store hit), skipping"
-          echo "skip=true" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-
+        # Only the succeed-list may empty `bin`, because only `run` writes it,
+        # and only after the binary exited 0. Presence of $BIN in the local
+        # store means it was built, not that it ever ran.
         SHARD=${BIN:11:1}
         STATE_FILE=$(mktemp)
 
@@ -221,19 +212,14 @@ runs:
           2>/dev/null; then
           if grep -qxF "$BIN" "$STATE_FILE"; then
             echo "Already succeeded (per succeed-list), skipping"
-            echo "skip=true" >> $GITHUB_OUTPUT
             exit 0
           fi
         fi
-        echo "skip=false" >> $GITHUB_OUTPUT
+        echo "bin=$BIN" >> $GITHUB_OUTPUT
 
     - name: Build
-      id: build
-      if: steps.check.outputs.skip != 'true'
+      if: steps.check.outputs.bin != ''
       shell: bash
       env:
         DRV: ${{ steps.eval.outputs.drv }}
-        BIN: ${{ steps.eval.outputs.bin }}
-      run: |
-        nix build -L "$DRV^out"
-        echo "bin=$BIN" >> $GITHUB_OUTPUT
+      run: nix build -L "$DRV^out"
