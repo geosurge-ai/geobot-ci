@@ -1,5 +1,9 @@
-name: Check if changed
-description: Setup SSH, check if a nix package has already succeeded, build if not
+name: Check if run required
+description: |
+  Evaluate a flake attribute and decide whether it still needs to be built and
+  run. Emits `drv` and `bin` when the succeed-list has no record of this output
+  path, and nothing when it does. Does not build: the caller builds `drv` and
+  passes `bin` to the `run` action.
 
 inputs:
   geobot_ssh_key:
@@ -21,6 +25,9 @@ outputs:
   bin:
     description: "Full path to binary - empty if it already succeeded"
     value: ${{ steps.check.outputs.bin }}
+  drv:
+    description: "Derivation to build - empty if it already succeeded"
+    value: ${{ steps.check.outputs.drv }}
 
 runs:
   using: composite
@@ -195,6 +202,7 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         BIN: ${{ steps.eval.outputs.bin }}
+        DRV: ${{ steps.eval.outputs.drv }}
         REPOSITORY: ${{ github.repository }}
       run: |
         # Only the succeed-list may empty `bin`, because only `run` writes it,
@@ -216,11 +224,4 @@ runs:
           fi
         fi
         echo "bin=$BIN" >> $GITHUB_OUTPUT
-
-    - name: Build
-      id: build
-      if: steps.check.outputs.bin != ''
-      shell: bash
-      env:
-        DRV: ${{ steps.eval.outputs.drv }}
-      run: nix build -L "$DRV^out"
+        echo "drv=$DRV" >> $GITHUB_OUTPUT
