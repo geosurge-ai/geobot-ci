@@ -218,6 +218,7 @@ runs:
         echo "bin=$BIN" >> $GITHUB_OUTPUT
 
     - name: Build
+      id: build
       if: steps.check.outputs.bin != ''
       shell: bash
       env:
