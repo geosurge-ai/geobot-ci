@@ -39,9 +39,8 @@ while IFS= read -r raw; do
   esac
 
   case "$keep" in
-    all) ;;
-    ''|*[!0-9]*|0) 
-      echo "ERROR: keep must be a positive integer or 'all': $line" >&2
+    ''|*[!0-9]*|0)
+      echo "ERROR: keep must be a positive integer: $line" >&2
       exit 1
       ;;
   esac
@@ -135,11 +134,6 @@ while [ "$#" -gt 0 ]; do
   if [ "$total" -eq 0 ]; then
     echo "  [!] $dir is empty"
     unprotected=$((unprotected + 1))
-    continue
-  fi
-
-  if [ "$keep" = all ]; then
-    echo "  [=] $dir: $total root(s), kept whole"
     continue
   fi
 

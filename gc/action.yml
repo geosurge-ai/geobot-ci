@@ -12,8 +12,7 @@ description: |
     <ssh_target> <gcroot_dir> <keep> <host_pubkey>
 
   `keep` is how many entries of that directory to keep, newest first by mtime;
-  the rest are deleted. Use `all` for a directory the writing job replaces
-  wholesale, which is a requirement that it exist rather than a retention rule.
+  the rest are deleted.
 
   Example:
     root@34.13.40.72 /var/cache/github-runners-shared/geobot-ci-gcroots 100 ssh-ed25519 AAAAC3NzaC1...
