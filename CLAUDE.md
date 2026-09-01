@@ -1,6 +1,6 @@
 ## Project Overview
 
-`geobot-ci` is a collection of small composite GitHub Actions (`check-if-changed`, `eval`, `gc`, `run`, `setup`) shared by other Geosurge repos (mainly `grim-monolith`, `darksteel-forge`). Consumers pin by full commit SHA. There is no CI in this repo — actions are validated by running them in consumer workflows.
+`geobot-ci` is a collection of small composite GitHub Actions (`check-if-changed`, `gc`, `run`, `setup`) shared by other Geosurge repos (mainly `grim-monolith`, `darksteel-forge`). Consumers pin by full commit SHA. There is no CI in this repo — actions are validated by running them in consumer workflows.
 
 ## Pushing changes
 
@@ -18,7 +18,8 @@ After pushing to main:
 
 ## Editing actions
 
-- `check-if-changed/`, `eval/`, `gc/`, `run/`, `setup/` are each a composite action with an `action.yml`. Keep changes minimal — these run on every CI job of every consumer and a regression here fans out everywhere.
+- `check-if-changed/`, `gc/`, `run/`, `setup/` are each a composite action with an `action.yml`. Keep changes minimal — these run on every CI job of every consumer and a regression here fans out everywhere.
 - `nix eval` calls are wrapped in `timeout` (`eval_timeout`, default 600s) and retried. Every runner slot on vortex shares one `XDG_CACHE_HOME` (`/var/cache/github-runners-shared`), so concurrent evals contend on Lix's per-input fetcher lock (`$XDG_CACHE_HOME/nix/fetcher-lock-*`, keyed on repo+ref+rev and held across the whole fetch) and on its fetcher-cache SQLite. Lix waits on both without a timeout, so the `timeout` is what turns a stalled peer into a retryable failure rather than an unbounded silent hang. Serializing with `flock -w 120` was tried and reverted in 3ea0edc: 120s of queue depth across 64 slots made jobs hard-fail under load.
-- The release-asset cache (`geobot-ci-eval-cache`, `geobot-ci-succeed-list`) is per-consumer-repo and managed by the actions themselves; do not write to it from outside.
-- gcroots have two halves and both matter. `check-if-changed` builds the path, and its out-link is the only thing rooting that closure while the job runs; the default `./result` sits in the runner workspace and is removed at cleanup, so pass `gcroot_dir` on any host that collects garbage on its own schedule. `gc/gc.sh` then installs the retained set from the eval-cache — but only for paths that still exist, so if the host swept in between there is nothing left to root and the retained set freezes at whatever it last held. Nothing rebuilds an old revision's output, so that state is permanent; the run only warns.
+- The succeed-list (`geobot-ci-succeed-list`) is per-consumer-repo and managed by `check-if-changed` and `run` themselves; do not write to it from outside. Only `run` may add to it, and only after the binary exited 0 — presence of a path in a store says it was built, not that it ever ran.
+- A gcroot is written by the job that builds or receives the path, while it still holds it. `check-if-changed`'s `out_link` is that root: the default `./result` sits in the runner workspace and is removed at cleanup, so pass a path under a persistent directory on any host that collects garbage on its own schedule. `gc/gc.sh` only bounds how many of those roots are kept — it resolves no store paths and can protect nothing the writing job did not already root. Getting this backwards is what the eval-cache was: roots installed after the fact, a day later, for paths a sweep in between had already taken.
+- `gc/gc.sh` refuses to collect on a host where a declared gcroot directory is missing or empty, because that means the job that writes it never ran and the store's roots are ones this script cannot see. Keep that guard; it is the only thing between a misconfigured target line and an emptied store.

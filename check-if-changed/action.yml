@@ -89,7 +89,7 @@ runs:
         # eval also drops its flock, letting the next job through.
         attempts=3
         for attempt in $(seq 1 "$attempts"); do
-          RESULT=$(timeout -k 30 "$EVAL_TIMEOUT" nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; outputs = builtins.listToAttrs (map (n: { name = n; value = drv.${n}.outPath; }) drv.outputs); mainProgram = drv.meta.mainProgram; }' 2>"$RUNNER_TEMP/nix-eval.err") && status=0 || status=$?
+          RESULT=$(timeout -k 30 "$EVAL_TIMEOUT" nix eval $NIX_EVAL_FLAGS --json "$KEY" --apply 'drv: { drv = drv.drvPath; out = drv.outPath; mainProgram = drv.meta.mainProgram; }' 2>"$RUNNER_TEMP/nix-eval.err") && status=0 || status=$?
           cat "$RUNNER_TEMP/nix-eval.err" >&2
           if [ "$status" -eq 0 ]; then
             break
@@ -112,90 +112,10 @@ runs:
         OUT=$(echo "$RESULT" | jq -r '.out')
         MAIN=$(echo "$RESULT" | jq -r '.mainProgram')
         BIN="$OUT/bin/$MAIN"
-        EVAL_FILE="$RUNNER_TEMP/geobot-eval-result.json"
-        printf '%s' "$RESULT" > "$EVAL_FILE"
         echo "drv=$DRV" >> $GITHUB_OUTPUT
         echo "bin=$BIN" >> $GITHUB_OUTPUT
-        echo "key=$KEY" >> $GITHUB_OUTPUT
-        echo "eval_file=$EVAL_FILE" >> $GITHUB_OUTPUT
         echo "Drv: $DRV"
         echo "Bin: $BIN"
-        echo "Key: $KEY"
-
-    - name: Record eval result
-      shell: bash
-      env:
-        GH_TOKEN: ${{ github.token }}
-        REPOSITORY: ${{ github.repository }}
-        KEY: ${{ steps.eval.outputs.key }}
-        EVAL_FILE: ${{ steps.eval.outputs.eval_file }}
-      run: |
-        SHARD=$(printf '%s' "$KEY" | sha256sum | cut -c1)
-        WORKDIR=$(mktemp -d)
-        STATE_FILE="$WORKDIR/eval-cache-$SHARD.json"
-        NEW_FILE="$WORKDIR/new-eval-cache-$SHARD.json"
-
-        # `gh release upload --clobber` is delete-then-POST and not atomic.
-        # During the brief gap a concurrent download returns 404. Without inner
-        # retry we'd treat that as "asset empty", and the subsequent clobber
-        # would wipe every previously-recorded entry on the shard. 3 attempts
-        # with backoff outlast the clobber window; only a truly-absent asset
-        # (first job ever for this shard) reaches the empty fallback.
-        fetch_state() {
-          for i in 1 2 3; do
-            if gh release download \
-              "geobot-ci-eval-cache" \
-              --repo "$REPOSITORY" \
-              --pattern "eval-cache-$SHARD.json" \
-              --output "$STATE_FILE" \
-              --clobber \
-              2>/dev/null; then
-              return 0
-            fi
-            if [ "$i" -lt 3 ]; then
-              sleep "$i"
-            fi
-          done
-          echo '{}' > "$STATE_FILE"
-        }
-        key_present() {
-          [ "$(jq --arg k "$KEY" 'has($k)' "$STATE_FILE")" = "true" ]
-        }
-        merge_entry() {
-          jq --arg k "$KEY" --slurpfile v "$EVAL_FILE" '.[$k] = $v[0]' "$STATE_FILE" > "$NEW_FILE"
-          mv "$NEW_FILE" "$STATE_FILE"
-        }
-
-        fetch_state
-        if key_present; then
-          echo "Already recorded $KEY in shard $SHARD; no upload needed"
-          exit 0
-        fi
-        merge_entry
-
-        attempts=5
-        for attempt in $(seq 1 $attempts); do
-          if gh release upload \
-               "geobot-ci-eval-cache" \
-               "$STATE_FILE" \
-               --repo "$REPOSITORY" \
-               --clobber 2>&1; then
-            echo "Recorded $KEY to shard $SHARD (attempt $attempt)"
-            exit 0
-          fi
-          if [ "$attempt" -eq "$attempts" ]; then
-            echo "FAIL: upload of $KEY to shard $SHARD failed after $attempts attempts" >&2
-            exit 1
-          fi
-          echo "Upload attempt $attempt failed; re-fetching state and retrying..." >&2
-          sleep "$attempt"
-          fetch_state
-          if key_present; then
-            echo "Another job recorded $KEY meanwhile; no-op"
-            exit 0
-          fi
-          merge_entry
-        done
 
     - name: Check if already succeeded
       id: check
