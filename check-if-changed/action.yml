@@ -16,19 +16,14 @@ inputs:
     required: false
     default: "600"
     description: "Seconds each nix eval attempt may run before it is killed and retried"
-  gcroot_dir:
+  out_link:
     required: false
-    default: ""
+    default: result
     description: |
-      Directory, on the runner host, to keep the build's out-link in on a
-      default-branch push. Must outlive the job — `nix build`'s default
-      ./result sits in the workspace and is removed at cleanup, taking the
-      indirect gcroot with it. Empty (default) keeps that ephemeral
-      behaviour.
-  gcroot_retain:
-    required: false
-    default: "10"
-    description: "Out-links to keep in gcroot_dir, newest first. Ignored when gcroot_dir is empty."
+      Where to put `nix build --out-link`, which is what roots the closure.
+      The default lands in the runner workspace and is removed at job
+      cleanup; pass a path under a persistent directory to keep a build
+      alive between the host's garbage collections.
 
 outputs:
   bin:
@@ -236,26 +231,7 @@ runs:
       shell: bash
       env:
         DRV: ${{ steps.eval.outputs.drv }}
-        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        GCROOT_DIR: ${{ inputs.gcroot_dir }}
-        GCROOT_RETAIN: ${{ inputs.gcroot_retain }}
+        OUT_LINK: ${{ inputs.out_link }}
       run: |
-        # A default-branch build is what `gc/gc.sh` later roots, and it can
-        # only root a path that still exists. The default ./result out-link
-        # lives in the runner workspace and is removed at job cleanup, so on a
-        # host that collects between the build and the next gc run the path is
-        # already gone — and since nothing rebuilds an old revision's output,
-        # the roots never advance again. Keeping the out-link somewhere
-        # persistent closes that window.
-        if [ -n "$GCROOT_DIR" ] \
-          && [ "$GITHUB_EVENT_NAME" = "push" ] \
-          && [ -n "$DEFAULT_BRANCH" ] \
-          && [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]; then
-          mkdir -p "$GCROOT_DIR"
-          nix build -L "$DRV^out" --out-link "$GCROOT_DIR/$(basename "$DRV" .drv)"
-          ls -1t "$GCROOT_DIR" | tail -n "+$((GCROOT_RETAIN + 1))" | while IFS= read -r stale; do
-            rm -f -- "$GCROOT_DIR/$stale"
-          done
-        else
-          nix build -L "$DRV^out"
-        fi
+        mkdir -p "$(dirname "$OUT_LINK")"
+        nix build -L "$DRV^out" --out-link "$OUT_LINK"
