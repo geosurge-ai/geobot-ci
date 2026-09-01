@@ -145,9 +145,13 @@ runs:
         fi
         echo "bin=$BIN" >> $GITHUB_OUTPUT
 
+    # Runs even when the succeed-list skipped the run, because the out-link is
+    # what roots this revision's closure and a skip is precisely the case where
+    # no other job in this revision will write one. Against a store that still
+    # has the path this costs nothing; against one that swept it, rebuilding is
+    # what puts the current closure back under a root.
     - name: Build
       id: build
-      if: steps.check.outputs.bin != ''
       shell: bash
       env:
         DRV: ${{ steps.eval.outputs.drv }}
