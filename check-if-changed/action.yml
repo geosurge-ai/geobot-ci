@@ -121,31 +121,19 @@ runs:
       id: check
       shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
         BIN: ${{ steps.eval.outputs.bin }}
-        REPOSITORY: ${{ github.repository }}
       run: |
-        # Only the succeed-list may empty `bin`, because only `run` writes it,
-        # and only after the binary exited 0. Presence of $BIN in the local
-        # store means it was built, not that it ever ran.
-        SHARD=${BIN:11:1}
-        STATE_FILE=$(mktemp)
-
-        if gh release download \
-          "geobot-ci-succeed-list" \
-          --repo "$REPOSITORY" \
-          --pattern "succeeded-$SHARD.txt" \
-          --output "$STATE_FILE" \
-          --clobber \
-          2>/dev/null; then
-          if grep -qxF "$BIN" "$STATE_FILE"; then
-            echo "Already succeeded (per succeed-list), skipping"
-            exit 0
-          fi
+        # Only `run` writes this, and only after the binary exited 0. Presence of
+        # $BIN in the local store means it was built, not that it ever ran.
+        DIR=/var/cache/github-runners-shared/geobot-ci-succeeded
+        KEY=$(printf '%s' "$BIN" | sha256sum | cut -d' ' -f1)
+        if [ -e "$DIR/$KEY" ]; then
+          echo "Already succeeded, skipping"
+        else
+          echo "bin=$BIN" >> $GITHUB_OUTPUT
         fi
-        echo "bin=$BIN" >> $GITHUB_OUTPUT
 
-    # Runs even when the succeed-list skipped the run, because the out-link is
+    # Runs even when the marker skipped the run, because the out-link is
     # what roots this revision's closure and a skip is precisely the case where
     # no other job in this revision will write one. Against a store that still
     # has the path this costs nothing; against one that swept it, rebuilding is

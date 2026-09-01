@@ -53,28 +53,19 @@ runs:
       id: check
       shell: bash
       env:
-        NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"
-        GH_TOKEN: ${{ github.token }}
         BIN: ${{ inputs.bin }}
-        REPOSITORY: ${{ github.repository }}
       run: |
-        SHARD=${BIN:11:1}
-        STATE_FILE=$(mktemp)
-
-        if gh release download \
-          "geobot-ci-succeed-list" \
-          --repo "$REPOSITORY" \
-          --pattern "succeeded-$SHARD.txt" \
-          --output "$STATE_FILE" \
-          --clobber \
-          2>/dev/null; then
-          if grep -qxF "$BIN" "$STATE_FILE"; then
-            echo "Already succeeded, skipping"
-            echo "skip=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+        # Membership in a set of opaque keys, so a file per key: creating one is
+        # atomic, testing one needs no lock, and expiry is a find. The directory
+        # is on the runners' shared volume, which every runner mounts.
+        DIR=/var/cache/github-runners-shared/geobot-ci-succeeded
+        KEY=$(printf '%s' "$BIN" | sha256sum | cut -d' ' -f1)
+        if [ -e "$DIR/$KEY" ]; then
+          echo "Already succeeded, skipping"
+          echo "skip=true" >> $GITHUB_OUTPUT
+        else
+          echo "skip=false" >> $GITHUB_OUTPUT
         fi
-        echo "skip=false" >> $GITHUB_OUTPUT
 
     - name: Run
       if: steps.check.outputs.skip != 'true'
@@ -108,71 +99,16 @@ runs:
       if: steps.check.outputs.skip != 'true'
       shell: bash
       env:
-        NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"
-        GH_TOKEN: ${{ github.token }}
         BIN: ${{ inputs.bin }}
-        REPOSITORY: ${{ github.repository }}
       run: |
-        SHARD=${BIN:11:1}
-        STATE_FILE="$(mktemp -d)/succeeded-$SHARD.txt"
-
-        # `gh release upload --clobber` is delete-then-POST and not atomic.
-        # During the brief gap a concurrent download returns 404. Without inner
-        # retry we'd treat that as "asset empty", and the subsequent clobber
-        # would wipe every previously-recorded entry on the shard. 3 attempts
-        # with backoff outlast the clobber window; only a truly-absent asset
-        # (first job ever for this shard) reaches the empty fallback.
-        fetch_state() {
-          for i in 1 2 3; do
-            if gh release download \
-              "geobot-ci-succeed-list" \
-              --repo "$REPOSITORY" \
-              --pattern "succeeded-$SHARD.txt" \
-              --output "$STATE_FILE" \
-              --clobber \
-              2>/dev/null; then
-              return 0
-            fi
-            if [ "$i" -lt 3 ]; then
-              sleep "$i"
-            fi
-          done
-          : > "$STATE_FILE"
-        }
-        bin_present() {
-          grep -qxF "$BIN" "$STATE_FILE"
-        }
-        add_entry() {
-          echo "$BIN" >> "$STATE_FILE"
-        }
-
-        fetch_state
-        if bin_present; then
-          echo "Already recorded $BIN in shard $SHARD; no upload needed"
-          exit 0
-        fi
-        add_entry
-
-        attempts=5
-        for attempt in $(seq 1 $attempts); do
-          if gh release upload \
-               "geobot-ci-succeed-list" \
-               "$STATE_FILE" \
-               --repo "$REPOSITORY" \
-               --clobber 2>&1; then
-            echo "Recorded $BIN to shard $SHARD (attempt $attempt)"
-            exit 0
-          fi
-          if [ "$attempt" -eq "$attempts" ]; then
-            echo "FAIL: upload of $BIN to shard $SHARD failed after $attempts attempts" >&2
-            exit 1
-          fi
-          echo "Upload attempt $attempt failed; re-fetching state and retrying..." >&2
-          sleep "$attempt"
-          fetch_state
-          if bin_present; then
-            echo "Another job recorded $BIN meanwhile; no-op"
-            exit 0
-          fi
-          add_entry
-        done
+        DIR=/var/cache/github-runners-shared/geobot-ci-succeeded
+        KEY=$(printf '%s' "$BIN" | sha256sum | cut -d' ' -f1)
+        mkdir -p "$DIR"
+        # Written aside and renamed so a reader never sees a half-written marker.
+        # The body is the path it stands for, so the directory can be read back.
+        printf '%s\n' "$BIN" > "$DIR/.tmp.$$"
+        mv -f "$DIR/.tmp.$$" "$DIR/$KEY"
+        echo "Recorded $BIN"
+        # Expiry lives with the writer because nothing else walks this directory.
+        # A dropped entry re-runs a job; it can never cause a wrong skip.
+        find "$DIR" -type f -mtime +30 -delete
