@@ -271,6 +271,12 @@ if [ "$host_input" -eq 0 ]; then
 fi
 
 if [ "$host_added" -eq 0 ]; then
+  # Not fatal: a host that never built these has nothing of theirs to protect.
+  # It is still worth an annotation, because the other way to reach this state
+  # is a sweep between the build and this run — and from there the roots can
+  # never advance, since nothing rebuilds an old revision's output. Silent
+  # success here reads identically to a healthy no-op.
+  echo "::warning title=gcroots did not advance on $hostname::none of the $host_input resolved path(s) are present; roots still point at whatever was last installed. If this repeats, the retained set is frozen — check the subdir mtimes under $gcroot_root."
   echo "NOTE: none of the $host_input resolved path(s) are present on $hostname — nothing new to root"
 fi
 
