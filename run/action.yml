@@ -1,16 +1,18 @@
 name: Run
-description: Setup SSH, run binary, and record success
+description: |
+  Run a binary and record the success.
+
+  Expects `setup` to have run earlier in the same job: it exports NIX_SSHOPTS
+  and GIT_SSH_COMMAND into $GITHUB_ENV, which every later step inherits, so
+  repeating it here would be the same work twice.
 
 inputs:
-  geobot_ssh_key:
-    required: true
-    description: "SSH private key for git access and secrets decryption"
   bin:
     required: true
-    description: "Full path to binary to run"
+    description: "Full path to the binary to run, from check-if-ran's `bin` output"
   timeout:
     required: true
-    description: "Timeout in seconds"
+    description: "Seconds the binary may run before it is killed"
   retries:
     required: false
     default: "0"
@@ -19,28 +21,11 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Setup SSH
-      shell: bash
-      run: |
-        mkdir -p $HOME/.ssh
-        echo "${{ inputs.geobot_ssh_key }}" > $HOME/.ssh/id_ed25519
-        chmod 600 $HOME/.ssh/id_ed25519
-        echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> $HOME/.ssh/known_hosts
-        echo "Host *" > $HOME/.ssh/config
-        echo "  IdentityFile $HOME/.ssh/id_ed25519" >> $HOME/.ssh/config
-        echo "  IdentitiesOnly yes" >> $HOME/.ssh/config
-        echo "  ConnectTimeout 30" >> $HOME/.ssh/config
-        echo "  ServerAliveInterval 15" >> $HOME/.ssh/config
-        echo "  ServerAliveCountMax 4" >> $HOME/.ssh/config
-        echo "  UserKnownHostsFile $HOME/.ssh/known_hosts" >> $HOME/.ssh/config
-        echo "  StrictHostKeyChecking yes" >> $HOME/.ssh/config
-        chmod 600 $HOME/.ssh/config
-        echo "NIX_SSHOPTS=-F $HOME/.ssh/config" >> $GITHUB_ENV
-        echo "GIT_SSH_COMMAND=ssh -F $HOME/.ssh/config" >> $GITHUB_ENV
-
-    # Re-check succeed list before running. When using concurrency groups, multiple jobs
-    # wait in queue. After the previous job finishes, check if it already recorded our
-    # bin as succeeded - if so, skip running.
+    # Concurrency queues several jobs on one key. After the first finishes and
+    # records its bin, the ones behind it would repeat work already done, so
+    # re-read the set here rather than trusting the decision made before the
+    # queue. The build has already run either way, which is what keeps this
+    # revision's closure rooted.
     #
     # Example with 3 jobs having the same bin=X:
     # 1. Job A (bin=X) runs
@@ -68,6 +53,7 @@ runs:
         fi
 
     - name: Run
+      id: run
       if: steps.check.outputs.skip != 'true'
       shell: bash
       env:
