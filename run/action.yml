@@ -67,6 +67,36 @@ runs:
           echo "skip=false" >> $GITHUB_OUTPUT
         fi
 
+    # `bin` is a store path produced by a DIFFERENT job, and there is now more
+    # than one self-hosted host (vortex and deadlift, since 2026-09-08), each
+    # with its own /nix/store. GitHub schedules `build` and `run` independently,
+    # so roughly half the time the binary was built on the other machine and is
+    # simply absent here. The exec below then dies with:
+    #   timeout: failed to run command '/nix/store/…': No such file or directory
+    #   Error: Process completed with exit code 127
+    # Exec'ing a path asks nix for nothing, so no substitution is attempted and
+    # the configured substituters never get the chance to supply it.
+    #
+    # Realising it first makes the dependency explicit: a no-op when the path is
+    # already local, a substitution when it is not, and a clear "don't know how
+    # to build" rather than a bare 127 when it is genuinely unavailable.
+    # `bin` points INSIDE the store path (…-name/bin/name), so trim to the store
+    # root before realising.
+    - name: Ensure the binary is in this runner's store
+      if: steps.check.outputs.skip != 'true'
+      shell: bash
+      env:
+        BIN: ${{ inputs.bin }}
+      run: |
+        set -euo pipefail
+        STORE_PATH=$(printf '%s' "$BIN" | cut -d/ -f1-4)
+        if [ -e "$BIN" ]; then
+          echo "$STORE_PATH already present in this store"
+        else
+          echo "$STORE_PATH absent (built on another host); realising"
+          nix-store --realise "$STORE_PATH"
+        fi
+
     - name: Run
       if: steps.check.outputs.skip != 'true'
       shell: bash
