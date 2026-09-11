@@ -1,0 +1,152 @@
+name: run
+
+# Evaluate one flake package, skip it if that exact binary already ran green on
+# this host, otherwise build it, run it, and record the success. Every step is
+# a real job step, so `gh run view --json jobs` reports each one's duration.
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        required: true
+        type: string
+        description: "Flake attribute of a package with meta.mainProgram"
+      timeout:
+        required: true
+        type: number
+        description: "Seconds the binary may run"
+      timeout_minutes:
+        required: false
+        type: number
+        default: 120
+        description: "Job timeout"
+      env:
+        required: false
+        type: string
+        default: ""
+        description: "KEY=VALUE lines exported to the binary"
+      checkout:
+        required: false
+        type: boolean
+        default: false
+        description: "Check the calling repository out first, for a binary that reads the working tree"
+    secrets:
+      geobot_ssh_key:
+        required: true
+
+jobs:
+  run:
+    runs-on: self-hosted
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - if: inputs.checkout
+        uses: actions/checkout@v5
+
+      - uses: geosurge-ai/geobot-ci/setup@ca9ed91ef783e96b6db1050d8b40ab916ee55ce9
+        with:
+          geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
+
+      # Bound each eval attempt. Two shared-state waits inside `nix eval` are
+      # unbounded, and on vortex every runner slot shares one XDG_CACHE_HOME
+      # (/var/cache/github-runners-shared), so both are contended machine-wide:
+      #
+      #   - The fetcher lock. Lix's Cache::lookupOrLock flocks
+      #     $XDG_CACHE_HOME/nix/fetcher-lock-<hash of the input attrs> and holds it
+      #     across the whole fetch. It takes that flock via lockPathAsync, which has
+      #     no timeout and -- unlike the sync lockPath -- never prints its waitMsg.
+      #     The hash covers only repo+ref+rev, so every job on a given commit queues
+      #     on one lock file regardless of which package it evaluates, and a single
+      #     stalled holder silently wedges all of them.
+      #   - The fetcher cache. Lix retries SQLITE_BUSY in an uncapped `while (true)`
+      #     loop (retrySQLite), sleeping <=0.1s per try and warning at most once
+      #     per 10s.
+      #
+      # Neither wait can fail on its own, so absent a timeout a transient stall
+      # becomes an unbounded hang -- observed as 70-83min steps with no output at
+      # all, ended only by cancelling the job. A real eval takes ~2-3min, so cap the
+      # attempt and retry: killing the eval also drops its flock, letting the next
+      # job through.
+      - name: Evaluate package
+        id: eval
+        env:
+          NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"
+          FLAKE: git+ssh://git@github.com/${{ github.repository }}?ref=${{ github.head_ref || github.ref_name }}&rev=${{ github.event.pull_request.head.sha || github.sha }}
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          attempts=3
+          for attempt in $(seq 1 "$attempts"); do
+            RESULT=$(timeout -k 30 600 nix eval --json "$FLAKE#$PACKAGE" \
+              --apply 'drv: { drv = drv.drvPath; out = drv.outPath; mainProgram = drv.meta.mainProgram; }' \
+              2>"$RUNNER_TEMP/nix-eval.err") && status=0 || status=$?
+            cat "$RUNNER_TEMP/nix-eval.err" >&2
+            if [ "$status" -eq 0 ]; then
+              break
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              if [ "$status" -eq 124 ]; then
+                echo "nix eval exceeded 600s (attempt $attempt); likely contention on the shared Nix fetcher lock. Retrying after $((attempt * 10))s" >&2
+                sleep "$((attempt * 10))"
+                continue
+              fi
+              if grep -q "is busy" "$RUNNER_TEMP/nix-eval.err"; then
+                echo "nix eval hit busy SQLite (attempt $attempt); retrying after $((attempt * 2))s" >&2
+                sleep "$((attempt * 2))"
+                continue
+              fi
+            fi
+            exit 1
+          done
+          DRV=$(echo "$RESULT" | jq -r '.drv')
+          BIN="$(echo "$RESULT" | jq -r '.out')/bin/$(echo "$RESULT" | jq -r '.mainProgram')"
+          echo "Drv: $DRV"
+          echo "Bin: $BIN"
+          echo "drv=$DRV" >> "$GITHUB_OUTPUT"
+          echo "bin=$BIN" >> "$GITHUB_OUTPUT"
+      # The succeeded set: one file per binary that exited 0, on the runners'
+      # shared volume. Presence of the binary in the local store means it was
+      # built, not that it ever ran, so only the record step writes here.
+      - name: Check if already succeeded
+        id: check
+        env:
+          BIN: ${{ steps.eval.outputs.bin }}
+        run: |
+          MARKER="/var/cache/github-runners-shared/geobot-ci-succeeded/$(printf '%s' "$BIN" | sha256sum | cut -d' ' -f1)"
+          echo "marker=$MARKER" >> "$GITHUB_OUTPUT"
+          if [ -e "$MARKER" ]; then
+            echo "Already succeeded, skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        if: steps.check.outputs.skip != 'true'
+        env:
+          DRV: ${{ steps.eval.outputs.drv }}
+        run: nix build -L --no-link "$DRV^out"
+
+      - name: Export extra env
+        if: steps.check.outputs.skip != 'true' && inputs.env != ''
+        env:
+          EXTRA_ENV: ${{ inputs.env }}
+        run: printf '%s\n' "$EXTRA_ENV" >> "$GITHUB_ENV"
+
+      - name: Run
+        if: steps.check.outputs.skip != 'true'
+        env:
+          BIN: ${{ steps.eval.outputs.bin }}
+          TIMEOUT: ${{ inputs.timeout }}
+        run: timeout "$TIMEOUT" "$BIN"
+
+      - name: Record success
+        if: steps.check.outputs.skip != 'true'
+        env:
+          BIN: ${{ steps.eval.outputs.bin }}
+          MARKER: ${{ steps.check.outputs.marker }}
+        run: |
+          DIR=$(dirname "$MARKER")
+          mkdir -p "$DIR"
+          # Two steps so the marker appears atomically: a redirect creates
+          # the file before its content lands, a rename does not. The body is
+          # the path it stands for, so the directory can be read back.
+          printf '%s\n' "$BIN" > "$DIR/.tmp.$$"
+          mv -f "$DIR/.tmp.$$" "$MARKER"
+          echo "Recorded $BIN"

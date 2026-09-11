@@ -50,17 +50,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Setup SSH
-      shell: bash
-      run: |
-        mkdir -p $HOME/.ssh
-        echo "${{ inputs.geobot_ssh_key }}" > $HOME/.ssh/id_ed25519
-        chmod 600 $HOME/.ssh/id_ed25519
-        echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >> $HOME/.ssh/known_hosts
-        chmod 600 $HOME/.ssh/known_hosts
-        echo "GIT_SSH_COMMAND=ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes" >> $GITHUB_ENV
+    - uses: geosurge-ai/geobot-ci/setup@ca9ed91ef783e96b6db1050d8b40ab916ee55ce9
+      with:
+        geobot_ssh_key: ${{ inputs.geobot_ssh_key }}
 
     - name: Run GC
+      id: gc
       shell: bash
       env:
         TARGETS: ${{ inputs.targets }}
