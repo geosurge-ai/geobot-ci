@@ -1,0 +1,76 @@
+name: build-and-root
+
+# Root this revision's flake inputs, build one flake attribute with its
+# out-link next to them. Every step is a real job step, so `gh run view --json
+# directory. Every step is a real job step, so `gh run view --json jobs`
+# reports each one's duration.
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        required: true
+        type: string
+        description: "Flake attribute to build"
+      inputs_package:
+        required: true
+        type: string
+        description: |
+          Flake attribute of a linkFarm over every flake input (the consumer
+          flake defines it). Its one output references all of them, so one
+          link roots the whole set.
+      root_dir:
+        required: false
+        type: string
+        default: ""
+        description: |
+          Directory that becomes this revision's gcroot. It receives exactly
+          two links, `inputs` and `result`, each replaced on success. Put it
+          under a directory that survives job cleanup on a host that collects
+          garbage on its own schedule; whatever bounds that directory sees one
+          entry per revision. Empty means a directory in the workspace, which
+          the next checkout cleans.
+      timeout_minutes:
+        required: false
+        type: number
+        default: 120
+        description: "Job timeout"
+    secrets:
+      geobot_ssh_key:
+        required: true
+
+jobs:
+  build:
+    runs-on: self-hosted
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    env:
+      NIX_CONFIG: "access-tokens = github.com=${{ github.token }}"
+      FLAKE: git+ssh://git@github.com/${{ github.repository }}?ref=${{ github.head_ref || github.ref_name }}&rev=${{ github.event.pull_request.head.sha || github.sha }}
+      ROOT_DIR: ${{ inputs.root_dir || format('{0}/gcroots', github.workspace) }}
+    steps:
+      - uses: geosurge-ai/geobot-ci/setup@ca9ed91ef783e96b6db1050d8b40ab916ee55ce9
+        with:
+          geobot_ssh_key: ${{ secrets.geobot_ssh_key }}
+
+      # A flake input's `-source` path is rooted by nothing while an evaluation
+      # reads it, and a build's closure never reaches it either: a .drv
+      # references the store paths its build reads, not the Nix source that was
+      # evaluated to write it. So the inputs get a root of their own first, in
+      # the directory the build's out-link goes to, so they live exactly as
+      # long as the revision that needs them.
+      - name: Create the root directory
+        run: mkdir -p "$ROOT_DIR"
+
+      - name: Root flake inputs
+        env:
+          PACKAGE: ${{ inputs.inputs_package }}
+        run: |
+          nix build -L --no-allow-import-from-derivation \
+            --out-link "$ROOT_DIR/inputs" "$FLAKE#$PACKAGE"
+
+      - name: Build
+        env:
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          nix build -L --no-allow-import-from-derivation \
+            --out-link "$ROOT_DIR/result" "$FLAKE#$PACKAGE"
